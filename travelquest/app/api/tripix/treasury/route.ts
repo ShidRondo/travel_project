@@ -18,6 +18,7 @@ type TreasuryRequestBody = {
   userId?: string;
   title?: string;
   description?: string;
+  sourceReferenceId?: string;
   txType?:
     | "WITHDRAWAL"
     | "CHECKIN_REWARD"
@@ -32,6 +33,27 @@ type WalletRow = {
   pending_balance?: number | string | null;
 };
 
+type WalletTransactionRow = {
+  id: string;
+  tx_type: string;
+  amount: number | string;
+  direction: "credit" | "debit";
+  title: string | null;
+  description: string | null;
+  reference_id: string | null;
+  created_at: string | null;
+};
+
+type WalletTransactionInsertClient = {
+  from: (table: "wallet_transactions") => {
+    insert: (values: Record<string, unknown>) => {
+      select: (columns: string) => {
+        single: () => PromiseLike<{ data: unknown }>;
+      };
+    };
+  };
+};
+
 type ProfileRow = {
   id: string;
   wallet_address: string | null;
@@ -42,6 +64,10 @@ function getSupabaseForRequest(request: Request) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
       global: {
         headers: {
           Authorization: request.headers.get("authorization") || "",
@@ -86,6 +112,13 @@ function assertTreasuryKey(request: Request) {
   if (providedKey !== expectedKey) {
     throw new Error("Treasury key is invalid.");
   }
+}
+
+function hasValidTreasuryKey(request: Request) {
+  const expectedKey = process.env.TRIPIX_TREASURY_API_KEY;
+  const providedKey = request.headers.get("x-travelquest-treasury-key");
+
+  return Boolean(expectedKey && providedKey === expectedKey);
 }
 
 function getErrorMessage(error: unknown) {
@@ -225,8 +258,14 @@ async function handleWithdrawal(request: Request, body: TreasuryRequestBody) {
 }
 
 async function handleReward(request: Request, body: TreasuryRequestBody) {
-  assertTreasuryKey(request);
+  if (hasValidTreasuryKey(request)) {
+    return handleAdminReward(body);
+  }
 
+  return handleAuthenticatedReward(request, body);
+}
+
+async function handleAdminReward(body: TreasuryRequestBody) {
   const amount = readAmount(body.amount);
   const admin = getSupabaseAdmin();
   const userId = body.userId;
@@ -255,17 +294,17 @@ async function handleReward(request: Request, body: TreasuryRequestBody) {
     destinationWallet,
     amount,
   });
+  await creditWalletBalance(admin, userId, amount);
 
-  await admin.from("wallet_transactions").insert({
-    user_id: userId,
-    tx_type: body.txType || "CHECKIN_REWARD",
+  const transaction = await insertRewardTransaction(admin, {
+    userId,
+    txType: body.txType || "CHECKIN_REWARD",
     amount,
-    direction: "credit",
     title: body.title || "TRIPIX reward",
     description:
       body.description ||
       `Reward sent from TravelQuest Treasury to ${destinationWallet}.`,
-    reference_id: transfer.signature,
+    referenceId: transfer.signature,
   });
 
   return NextResponse.json({
@@ -273,7 +312,289 @@ async function handleReward(request: Request, body: TreasuryRequestBody) {
     action: "reward",
     signature: transfer.signature,
     transfer,
+    transaction,
   });
+}
+
+async function handleAuthenticatedReward(
+  request: Request,
+  body: TreasuryRequestBody
+) {
+  const requestedAmount = readAmount(body.amount);
+  const supabase = getSupabaseForRequest(request);
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  if (body.userId && body.userId !== user.id) {
+    return NextResponse.json(
+      { error: "Authenticated rewards can only target the signed-in user." },
+      { status: 403 }
+    );
+  }
+
+  const admin = getSupabaseAdmin();
+  const txType = body.txType || "CHECKIN_REWARD";
+  const sourceReferenceId = body.sourceReferenceId;
+
+  if (!sourceReferenceId) {
+    return NextResponse.json(
+      { error: "Reward source reference is required." },
+      { status: 400 }
+    );
+  }
+
+  const { data: existingReward } = await admin
+    .from("wallet_transactions")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("tx_type", txType)
+    .eq("reference_id", sourceReferenceId)
+    .maybeSingle();
+
+  if (existingReward) {
+    return NextResponse.json(
+      { error: "This reward has already been sent." },
+      { status: 409 }
+    );
+  }
+
+  const resolvedAmount = await resolveAuthenticatedRewardAmount(admin, {
+    userId: user.id,
+    txType,
+    sourceReferenceId,
+    requestedAmount,
+  });
+
+  if (resolvedAmount instanceof NextResponse) {
+    return resolvedAmount;
+  }
+
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id, wallet_address")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const profileRow = profile as ProfileRow | null;
+  const destinationWallet = body.destinationWallet || profileRow?.wallet_address;
+
+  if (!destinationWallet || destinationWallet !== profileRow?.wallet_address) {
+    return NextResponse.json(
+      { error: "Connect and save your destination wallet first." },
+      { status: 400 }
+    );
+  }
+
+  const transfer = await transferTripixFromTreasury({
+    destinationWallet,
+    amount: resolvedAmount,
+  });
+  await creditWalletBalance(admin, user.id, resolvedAmount);
+  const transaction = await insertRewardTransaction(supabase, {
+    userId: user.id,
+    txType,
+    amount: resolvedAmount,
+    title: body.title || "TRIPIX reward",
+    description:
+      body.description ||
+      `Reward sent from TravelQuest Treasury to ${destinationWallet}.`,
+    referenceId: sourceReferenceId,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    action: "reward",
+    signature: transfer.signature,
+    transfer,
+    transaction,
+  });
+}
+
+async function resolveAuthenticatedRewardAmount(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  {
+    userId,
+    txType,
+    sourceReferenceId,
+    requestedAmount,
+  }: {
+    userId: string;
+    txType: NonNullable<TreasuryRequestBody["txType"]>;
+    sourceReferenceId: string;
+    requestedAmount: number;
+  }
+) {
+  if (txType === "CHECKIN_REWARD") {
+    const { data: checkin } = await supabase
+      .from("checkins")
+      .select("reward_amount, verified, rewarded")
+      .eq("id", sourceReferenceId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    const row = checkin as
+      | { reward_amount: number | string | null; verified: boolean | null; rewarded: boolean | null }
+      | null;
+
+    if (!row?.verified || !row.rewarded) {
+      return NextResponse.json(
+        { error: "Verified check-in reward source was not found." },
+        { status: 400 }
+      );
+    }
+
+    return Number(row.reward_amount || 0);
+  }
+
+  if (txType === "HIKE_REWARD") {
+    const { data: hikeDestination } = await supabase
+      .from("hike_session_destinations")
+      .select("hike_session_id, total_added")
+      .eq("id", sourceReferenceId)
+      .maybeSingle();
+    const destinationRow = hikeDestination as
+      | { hike_session_id: string; total_added: number | string | null }
+      | null;
+
+    if (!destinationRow) {
+      return NextResponse.json(
+        { error: "Hike reward source was not found." },
+        { status: 400 }
+      );
+    }
+
+    const { data: hikeSession } = await supabase
+      .from("hike_sessions")
+      .select("user_id")
+      .eq("id", destinationRow.hike_session_id)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (!hikeSession) {
+      return NextResponse.json(
+        { error: "Hike reward source does not belong to this user." },
+        { status: 403 }
+      );
+    }
+
+    return Number(destinationRow.total_added || 0);
+  }
+
+  if (txType === "EVENT_REWARD") {
+    const { data: participant } = await supabase
+      .from("event_participants")
+      .select("completed, reward_claimed")
+      .eq("post_id", sourceReferenceId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    const participantRow = participant as
+      | { completed: boolean | null; reward_claimed: boolean | null }
+      | null;
+
+    if (!participantRow?.completed || !participantRow.reward_claimed) {
+      return NextResponse.json(
+        { error: "Completed event reward source was not found." },
+        { status: 400 }
+      );
+    }
+
+    const { data: post } = await supabase
+      .from("posts")
+      .select("reward_per_finisher, stake_amount, event_capacity")
+      .eq("id", sourceReferenceId)
+      .maybeSingle();
+    const postRow = post as
+      | {
+          reward_per_finisher: number | string | null;
+          stake_amount: number | string | null;
+          event_capacity: number | null;
+        }
+      | null;
+    const rewardPerFinisher =
+      Number(postRow?.reward_per_finisher || 0) ||
+      Math.floor(
+        (Number(postRow?.stake_amount || 0) -
+          Math.round(Number(postRow?.stake_amount || 0) * 0.1)) /
+          Math.max(Number(postRow?.event_capacity || 1), 1)
+      );
+
+    if (requestedAmount > rewardPerFinisher) {
+      return NextResponse.json(
+        { error: "Requested event reward exceeds the event payout." },
+        { status: 400 }
+      );
+    }
+
+    return requestedAmount;
+  }
+
+  return NextResponse.json(
+    { error: "Unsupported authenticated reward type." },
+    { status: 400 }
+  );
+}
+
+async function creditWalletBalance(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  userId: string,
+  amount: number
+) {
+  const { data: wallet } = await supabase
+    .from("wallets")
+    .select("available_balance")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const walletRow = wallet as WalletRow | null;
+  const nextBalance = Number(walletRow?.available_balance || 0) + amount;
+
+  await supabase.from("wallets").upsert(
+    {
+      user_id: userId,
+      available_balance: nextBalance,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" }
+  );
+}
+
+async function insertRewardTransaction(
+  supabase: WalletTransactionInsertClient,
+  {
+    userId,
+    txType,
+    amount,
+    title,
+    description,
+    referenceId,
+  }: {
+    userId: string;
+    txType: NonNullable<TreasuryRequestBody["txType"]>;
+    amount: number;
+    title: string;
+    description: string;
+    referenceId: string;
+  }
+) {
+  const { data } = await supabase
+    .from("wallet_transactions")
+    .insert({
+      user_id: userId,
+      tx_type: txType,
+      amount,
+      direction: "credit",
+      title,
+      description,
+      reference_id: referenceId,
+    })
+    .select("id, tx_type, amount, direction, title, description, reference_id, created_at")
+    .single();
+
+  return data as WalletTransactionRow | null;
 }
 
 async function handleBurn(request: Request, body: TreasuryRequestBody) {

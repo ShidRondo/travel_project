@@ -151,11 +151,13 @@ export default function CompleteProfilePage() {
 
   useEffect(() => {
     const loadUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { user, error: userError } = await supabase.auth
+        .getUser()
+        .then(({ data, error }) => ({ user: data.user, error }))
+        .catch((error: Error) => ({ user: null, error }));
 
-      if (!user) {
+      if (userError || !user) {
+        await supabase.auth.signOut({ scope: "local" });
         router.push("/login");
         return;
       }
@@ -220,7 +222,11 @@ export default function CompleteProfilePage() {
     try {
       croppedFile = await cropAvatarFile(file);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Avatar crop failed.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "We could not prepare that photo. Try another image."
+      );
       setUploadingAvatar(false);
       return;
     }
@@ -237,7 +243,7 @@ export default function CompleteProfilePage() {
       });
 
     if (uploadError) {
-      setMessage(`Avatar upload failed: ${uploadError.message}`);
+      setMessage(`Photo upload failed: ${uploadError.message}`);
       setUploadingAvatar(false);
       return;
     }
@@ -286,7 +292,7 @@ export default function CompleteProfilePage() {
     const context = canvas.getContext("2d");
 
     if (!context) {
-      setMessage("Camera capture failed.");
+      setMessage("We could not capture a photo. Please try again.");
       return;
     }
 
@@ -296,7 +302,7 @@ export default function CompleteProfilePage() {
     );
 
     if (!blob) {
-      setMessage("Camera capture failed.");
+      setMessage("We could not capture a photo. Please try again.");
       return;
     }
 
@@ -357,14 +363,14 @@ export default function CompleteProfilePage() {
       >
         <section className="rounded-[28px] border border-zinc-800 bg-zinc-900 p-5 shadow-sm md:p-6 lg:sticky lg:top-6 lg:h-fit">
           <p className="text-xs font-medium uppercase tracking-wide text-sky-300">
-            Profile Setup
+            TravelQuest Profile
           </p>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white md:text-3xl">
             Complete your traveler profile
           </h1>
           <p className="mt-2 text-sm leading-6 text-zinc-300">
-            Your avatar, contact number, and location help make events and
-            check-ins feel more credible.
+            Add the details that make your check-ins, events, and rewards
+            trusted by other travelers.
           </p>
 
           <div className="mt-6 rounded-3xl border border-zinc-700 bg-zinc-800 p-5">
@@ -389,14 +395,14 @@ export default function CompleteProfilePage() {
                 {fullName || "New traveler"}
               </h2>
               <p className="mt-1 break-words text-sm text-zinc-300">
-                {email || "Add your details before entering TravelQuest"}
+                {email || "Add your details to continue"}
               </p>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-sky-500/40 bg-sky-500/15 px-4 py-3 text-sm font-medium text-sky-100 hover:bg-sky-500/20">
                 <Upload className="h-4 w-4" />
-                Upload
+                Upload photo
                 <input
                   type="file"
                   accept="image/*"
@@ -417,7 +423,7 @@ export default function CompleteProfilePage() {
                 className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/15 px-4 py-3 text-sm font-medium text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Camera className="h-4 w-4" />
-                Camera
+                Use camera
               </button>
             </div>
 
@@ -436,7 +442,7 @@ export default function CompleteProfilePage() {
                     onClick={handleCaptureCamera}
                     className="rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500"
                   >
-                    Capture Photo
+                    Capture photo
                   </button>
                   <button
                     type="button"
@@ -454,7 +460,7 @@ export default function CompleteProfilePage() {
 
             {uploadingAvatar ? (
               <p className="mt-3 text-center text-sm text-zinc-300">
-                Uploading avatar...
+                Uploading photo...
               </p>
             ) : null}
           </div>
@@ -654,7 +660,7 @@ export default function CompleteProfilePage() {
             disabled={loading || uploadingAvatar}
             className="w-full rounded-2xl bg-emerald-600 px-4 py-3 font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {loading ? "Saving..." : "Save and Continue"}
+            {loading ? "Saving profile..." : "Save and continue"}
           </button>
         </section>
       </form>

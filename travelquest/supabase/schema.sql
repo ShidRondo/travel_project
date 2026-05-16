@@ -44,6 +44,16 @@ create table if not exists public.wallet_transactions (
   created_at timestamptz default now()
 );
 
+create table if not exists public.user_reward_claims (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  claim_code text not null,
+  reward_amount numeric not null default 0,
+  source_reference_id text,
+  claimed_at timestamptz not null default now(),
+  unique (user_id, claim_code)
+);
+
 create table if not exists public.destinations (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
@@ -239,6 +249,8 @@ create table if not exists public.trailheads (
   trail_id uuid not null references public.trails(id) on delete cascade,
   name text not null,
   location text,
+  lat double precision,
+  lng double precision,
   created_at timestamptz default now(),
   unique (trail_id, name)
 );
@@ -251,6 +263,8 @@ create table if not exists public.trail_destinations (
   difficulty text not null,
   reward numeric not null default 0,
   sort_order integer default 0,
+  lat double precision,
+  lng double precision,
   created_at timestamptz default now(),
   unique (trail_id, name)
 );
@@ -278,6 +292,9 @@ create table if not exists public.hike_trailhead_verifications (
   hike_session_id uuid not null references public.hike_sessions(id) on delete cascade,
   trailhead_id uuid not null references public.trailheads(id),
   verified boolean default true,
+  gps_lat double precision,
+  gps_lng double precision,
+  verified_at timestamptz default now(),
   created_at timestamptz default now()
 );
 
@@ -343,6 +360,7 @@ cross join (
 alter table public.profiles enable row level security;
 alter table public.wallets enable row level security;
 alter table public.wallet_transactions enable row level security;
+alter table public.user_reward_claims enable row level security;
 alter table public.destinations enable row level security;
 alter table public.posts enable row level security;
 alter table public.post_likes enable row level security;
@@ -366,7 +384,10 @@ drop policy if exists "profiles_insert_own" on public.profiles;
 drop policy if exists "profiles_update_own" on public.profiles;
 drop policy if exists "wallets_own" on public.wallets;
 drop policy if exists "wallet_transactions_own" on public.wallet_transactions;
+drop policy if exists "user_reward_claims_own" on public.user_reward_claims;
 drop policy if exists "destinations_read" on public.destinations;
+drop policy if exists "destinations_insert_current_location_demo" on public.destinations;
+drop policy if exists "destinations_update_current_location_demo" on public.destinations;
 drop policy if exists "posts_read" on public.posts;
 drop policy if exists "posts_insert_own" on public.posts;
 drop policy if exists "posts_update_own" on public.posts;
@@ -396,8 +417,16 @@ create policy "profiles_update_own" on public.profiles for update using (auth.ui
 
 create policy "wallets_own" on public.wallets for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "wallet_transactions_own" on public.wallet_transactions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "user_reward_claims_own" on public.user_reward_claims for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create policy "destinations_read" on public.destinations for select to authenticated using (true);
+create policy "destinations_insert_current_location_demo" on public.destinations
+  for insert to authenticated
+  with check (name = 'Current Location Demo');
+create policy "destinations_update_current_location_demo" on public.destinations
+  for update to authenticated
+  using (name = 'Current Location Demo')
+  with check (name = 'Current Location Demo');
 create policy "posts_read" on public.posts for select to authenticated using (true);
 create policy "posts_insert_own" on public.posts for insert with check (auth.uid() = user_id);
 create policy "posts_update_own" on public.posts for update using (auth.uid() = user_id);
@@ -589,6 +618,7 @@ create policy "checkin_photos_write_own" on storage.objects
 insert into public.destinations
   (name, category, location, difficulty, reward_points, requires_qr, description, hero, image_url, start_lat, start_lng, dest_lat, dest_lng)
 values
+  ('CIT-U Main Campus', 'Hiking', 'N. Bacalso Avenue, Cebu City', 'Easy', 1000, false, 'Demo campus destination for testing live GPS, camera proof, and geofence check-in around Cebu Institute of Technology - University.', 'Campus proof run', 'https://images.unsplash.com/photo-1562774053-701939374585?auto=format&fit=crop&w=1200&q=80', 10.29508, 123.88022, 10.29578, 123.88044),
   ('Kawasan Falls', 'Falls', 'Badian, Cebu', 'Easy', 20, false, 'A famous multi-tiered waterfall destination known for turquoise water and canyon activities.', 'Waterfall explorer', 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80', 9.8005, 123.365, 9.8167, 123.3747),
   ('Osmena Peak', 'Hiking', 'Dalaguete, Cebu', 'Moderate', 30, false, 'A scenic mountain destination popular for sunrise hikes and panoramic ridge views.', 'Summit tracker', 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1200&q=80', 9.785, 123.596, 9.7993, 123.6072),
   ('Bantayan Island', 'Island', 'Cebu', 'Easy', 25, false, 'A well-known island destination with beaches, resorts, and clear coastal views.', 'Island escape', 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80', 11.244, 123.941, 11.2614, 123.9543),
@@ -642,13 +672,13 @@ update public.trails
 set next_trail_id = (select id from second_trail)
 where id = (select id from first_trail);
 
-insert into public.trailheads (trail_id, name, location)
-select id, 'Paseo Trailhead', 'Registered initial hiking point'
+insert into public.trailheads (trail_id, name, location, lat, lng)
+select id, 'Paseo Trailhead', 'Paseo Arcenas, Banawa, Cebu City', 10.30979, 123.87455
 from public.trails where code = 'paseo-ridge-network'
 on conflict do nothing;
 
-insert into public.trailheads (trail_id, name, location)
-select id, 'Pahamutan Junction Trailhead', 'Connected next trail start'
+insert into public.trailheads (trail_id, name, location, lat, lng)
+select id, 'Pahamutan Junction Trailhead', 'Connected next trail start', 10.29780, 123.87820
 from public.trails where code = 'pahamutan-extension-trail'
 on conflict do nothing;
 

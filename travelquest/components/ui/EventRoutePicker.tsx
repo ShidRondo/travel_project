@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  Circle,
   MapContainer,
   Marker,
   Polyline,
@@ -25,6 +26,7 @@ type EventRoutePickerProps = {
   onStartChange: (point: MapPoint) => void;
   onDestinationChange: (point: MapPoint) => void;
   onRouteDistanceChange?: (distanceKm: number | null) => void;
+  geofenceRadiusMeters?: number;
 };
 
 type RouteStatus = "idle" | "loading" | "routed" | "fallback";
@@ -67,7 +69,7 @@ function ClickHandler({
 }
 
 function formatPoint(point: MapPoint | null) {
-  if (!point) return "Not selected";
+  if (!point) return "Choose a point";
   return point.name?.trim() || `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`;
 }
 
@@ -142,7 +144,7 @@ function getDirectDistanceKm(startPoint: MapPoint, destinationPoint: MapPoint) {
 }
 
 function formatDistance(distanceKm: number | null) {
-  if (distanceKm === null) return "Not available";
+  if (distanceKm === null) return "Choose a route";
   return `${distanceKm.toFixed(distanceKm >= 10 ? 1 : 2)} km`;
 }
 
@@ -152,6 +154,7 @@ export default function EventRoutePicker({
   onStartChange,
   onDestinationChange,
   onRouteDistanceChange,
+  geofenceRadiusMeters = 180,
 }: EventRoutePickerProps) {
   const [mode, setMode] = useState<"start" | "destination">("start");
   const [routePath, setRoutePath] = useState<[number, number][]>([]);
@@ -305,6 +308,32 @@ export default function EventRoutePicker({
             onStartChange={onStartChange}
             onDestinationChange={onDestinationChange}
           />
+
+          {startPoint ? (
+            <Circle
+              center={[startPoint.lat, startPoint.lng]}
+              radius={geofenceRadiusMeters}
+              pathOptions={{
+                color: "#38bdf8",
+                fillColor: "#38bdf8",
+                fillOpacity: 0.13,
+                weight: 2,
+              }}
+            />
+          ) : null}
+
+          {destinationPoint ? (
+            <Circle
+              center={[destinationPoint.lat, destinationPoint.lng]}
+              radius={geofenceRadiusMeters}
+              pathOptions={{
+                color: "#34d399",
+                fillColor: "#34d399",
+                fillOpacity: 0.13,
+                weight: 2,
+              }}
+            />
+          ) : null}
 
           {startPoint ? (
             <Marker position={[startPoint.lat, startPoint.lng]}>

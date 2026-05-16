@@ -34,11 +34,13 @@ export default function Page() {
 
   useEffect(() => {
     const loadUserData = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { user, error: userError } = await supabase.auth
+        .getUser()
+        .then(({ data, error }) => ({ user: data.user, error }))
+        .catch((error: Error) => ({ user: null, error }));
 
-      if (!user) {
+      if (userError || !user) {
+        await supabase.auth.signOut({ scope: "local" });
         router.push("/login");
         return;
       }
@@ -68,14 +70,14 @@ export default function Page() {
   }, [router]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: "local" });
     router.push("/login");
   };
 
   if (loading || !user || !profile) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
-        Loading...
+        Loading TravelQuest...
       </div>
     );
   }

@@ -15,7 +15,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "TravelQuest",
-  description: "Gamified travel platform with TRIPIX and Solana wallet connection",
+  description:
+    "Plan verified travel quests, join reward events, and manage TRIPIX from your connected wallet.",
 };
 
 export default function RootLayout({

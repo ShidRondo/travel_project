@@ -31,7 +31,7 @@ export default function LoginPage() {
     const user = data.user;
 
     if (!user) {
-      setMessage("Login failed.");
+      setMessage("We could not sign you in. Please check your details and try again.");
       setLoading(false);
       return;
     }
@@ -64,11 +64,21 @@ export default function LoginPage() {
         onSubmit={handleLogin}
         className="w-full max-w-md space-y-4 rounded-3xl border border-zinc-800 bg-zinc-900 p-6"
       >
-        <h1 className="text-2xl font-semibold text-white">Login</h1>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-sky-300">
+            TravelQuest
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">
+            Welcome back
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            Sign in to continue your quests, rewards, and wallet activity.
+          </p>
+        </div>
 
         <input
           type="email"
-          placeholder="Email"
+          placeholder="Email address"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none"
@@ -89,13 +99,13 @@ export default function LoginPage() {
           disabled={loading}
           className="w-full rounded-2xl bg-sky-600 px-4 py-3 text-white hover:bg-sky-500 disabled:opacity-60"
         >
-          {loading ? "Logging in..." : "Login"}
+          {loading ? "Signing in..." : "Sign in"}
         </button>
 
         {message ? <p className="text-sm text-zinc-300">{message}</p> : null}
 
         <p className="text-center text-sm text-zinc-300">
-          No account yet?{" "}
+          New to TravelQuest?{" "}
           <Link href="/signup" className="font-medium text-sky-300 hover:text-sky-200">
             Sign up
           </Link>

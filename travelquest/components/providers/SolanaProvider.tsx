@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   ConnectionProvider,
   WalletProvider,
@@ -19,10 +19,13 @@ export default function SolanaProvider({
     process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com";
 
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
+  const handleWalletError = useCallback((error: Error) => {
+    console.warn("Solana wallet error:", error.message);
+  }, []);
 
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
+      <WalletProvider wallets={wallets} onError={handleWalletError}>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

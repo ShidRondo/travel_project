@@ -68,12 +68,12 @@ export default function SignupPage() {
 
       }
 
-      setMessage("Signup successful.");
+      setMessage("Account created. You can sign in now.");
       setLoading(false);
       router.push("/login");
     } catch (err) {
       console.error(err);
-      setMessage("Failed to connect to Supabase.");
+      setMessage("We could not create your account. Please try again.");
       setLoading(false);
     }
   };
@@ -84,7 +84,17 @@ export default function SignupPage() {
         onSubmit={handleSignup}
         className="w-full max-w-md space-y-4 rounded-3xl border border-zinc-800 bg-zinc-900 p-6"
       >
-        <h1 className="text-2xl font-semibold text-white">Sign Up</h1>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-emerald-300">
+            TravelQuest
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">
+            Create your account
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            Start tracking verified trips, events, badges, and TRIPIX rewards.
+          </p>
+        </div>
 
         <input
           type="text"
@@ -97,7 +107,7 @@ export default function SignupPage() {
 
         <input
           type="email"
-          placeholder="Email"
+          placeholder="Email address"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none"
@@ -118,7 +128,7 @@ export default function SignupPage() {
           disabled={loading}
           className="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-white hover:bg-emerald-500 disabled:opacity-60"
         >
-          {loading ? "Creating Account..." : "Create Account"}
+          {loading ? "Creating account..." : "Create account"}
         </button>
 
         {message ? <p className="text-sm text-zinc-300">{message}</p> : null}
