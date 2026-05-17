@@ -6,7 +6,12 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, Transaction } from "@solana/web3.js";
+import {
+  createAssociatedTokenAccountInstruction,
+  createTransferCheckedInstruction,
+  getAssociatedTokenAddress,
+} from "@solana/spl-token";
 import type { LucideIcon } from "lucide-react";
 import {
   AlertCircle,
@@ -486,6 +491,16 @@ type TreasuryRewardResponse = {
   transaction?: WalletTransactionRow | null;
 };
 
+type TreasurySnapshotResponse = {
+  treasury?: {
+    treasury: string;
+    mint: string;
+    tokenAccount: string;
+    decimals: number;
+  };
+  error?: string;
+};
+
 type CheckInState = {
   gps: boolean;
   photo: boolean;
@@ -549,123 +564,6 @@ const requiredEventFieldLabels: Record<RequiredEventField, string> = {
   destinationPoint: "Destination Location",
   distance: "Route Distance",
 };
-
-const fallbackAchievements: AchievementItem[] = [
-  {
-    id: "fallback-hike-master",
-    name: "Hike Master",
-    category: "Authority",
-    tier: "Advanced",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Grants authority to create hiking events at any difficulty level.",
-    grantsAuthority: "Hiking",
-  },
-  {
-    id: "fallback-waterfall-expertise",
-    name: "Waterfall Expertise",
-    category: "Authority",
-    tier: "Advanced",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Grants authority to create waterfall events at any difficulty level.",
-    grantsAuthority: "Falls",
-  },
-  {
-    id: "fallback-beach-explorer",
-    name: "Beach Explorer",
-    category: "Authority",
-    tier: "Beginner",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Grants authority to create beach events once unlocked.",
-    grantsAuthority: "Beach",
-  },
-  {
-    id: "fallback-island-specialist",
-    name: "Island Specialist",
-    category: "Authority",
-    tier: "Expert",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Grants authority to create island events once unlocked.",
-    grantsAuthority: "Island",
-  },
-  {
-    id: "fallback-trail-starter",
-    name: "Trail Starter",
-    category: "Hiking",
-    tier: "Beginner",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Complete 1 verified hiking destination.",
-  },
-  {
-    id: "fallback-first-checkin",
-    name: "First Check-In",
-    category: "Hiking",
-    tier: "Beginner",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Complete your first verified destination check-in.",
-  },
-  {
-    id: "fallback-trail-regular",
-    name: "Trail Regular",
-    category: "Hiking",
-    tier: "Beginner",
-    progress: 0,
-    target: 2,
-    unlocked: false,
-    description: "Complete 2 verified hiking destinations.",
-  },
-  {
-    id: "fallback-waterfall-finder",
-    name: "Waterfall Finder",
-    category: "Falls",
-    tier: "Beginner",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Complete 1 verified falls destination.",
-  },
-  {
-    id: "fallback-beach-day",
-    name: "Beach Day",
-    category: "Beach",
-    tier: "Beginner",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Complete 1 verified beach destination.",
-  },
-  {
-    id: "fallback-island-scout",
-    name: "Island Scout",
-    category: "Island",
-    tier: "Beginner",
-    progress: 0,
-    target: 1,
-    unlocked: false,
-    description: "Complete 1 verified island destination.",
-  },
-  {
-    id: "fallback-cebu-weekender",
-    name: "Cebu Weekender",
-    category: "Hiking",
-    tier: "Advanced",
-    progress: 0,
-    target: 3,
-    unlocked: false,
-    description: "Complete 3 verified Cebu destinations.",
-  },
-];
 
 const fallbackTrails: Trail[] = [
   {
@@ -736,35 +634,6 @@ const fallbackTrails: Trail[] = [
   },
 ];
 
-const fallbackHostingAuthority: HostingAuthority[] = [
-  {
-    category: "Hiking",
-    requiredBadge: "Open Demo Hosting",
-    authorized: true,
-  },
-  {
-    category: "Falls",
-    requiredBadge: "Waterfall Expertise",
-    authorized: false,
-  },
-  {
-    category: "Beach",
-    requiredBadge: "Beach Explorer",
-    authorized: false,
-  },
-  {
-    category: "Island",
-    requiredBadge: "Island Specialist",
-    authorized: false,
-  },
-];
-
-const eventAuthorityCategories: CategoryType[] = [
-  "Hiking",
-  "Falls",
-  "Beach",
-  "Island",
-];
 const currentLocationDemoName = "Current Location Discovery";
 const currentLocationClaimCode = "current_location_discovery";
 const currentLocationReward = 10;
@@ -832,6 +701,71 @@ function getActionIconClass(state: "idle" | "active" | "done") {
     case "idle":
       return "text-zinc-100";
   }
+}
+
+function getJoinedEventStatus(
+  activity: FeedPost,
+  eventStarted: boolean,
+  eventExpired: boolean
+) {
+  if (activity.participant?.failed) {
+    return {
+      label: "Failed Task",
+      helper: "Marked failed",
+      badgeClass: "border border-rose-500/40 bg-rose-500/15 text-rose-100",
+      railClass: "bg-rose-500",
+      cardClass: "border-rose-500/40 bg-rose-950/30",
+    };
+  }
+
+  if (activity.participant?.completed) {
+    return {
+      label: "Completed",
+      helper: "Reward claimed",
+      badgeClass:
+        "border border-emerald-500/40 bg-emerald-500/15 text-emerald-100",
+      railClass: "bg-emerald-500",
+      cardClass: "border-emerald-500/35 bg-emerald-950/20",
+    };
+  }
+
+  if (eventExpired) {
+    return {
+      label: "Expired",
+      helper: "Window closed",
+      badgeClass: "border border-zinc-600 bg-zinc-700 text-zinc-200",
+      railClass: "bg-zinc-500",
+      cardClass: "border-zinc-700 bg-zinc-800",
+    };
+  }
+
+  if (!eventStarted) {
+    return {
+      label: "Scheduled",
+      helper: "Waiting to start",
+      badgeClass: "border border-amber-500/40 bg-amber-500/15 text-amber-100",
+      railClass: "bg-amber-400",
+      cardClass: "border-amber-500/35 bg-amber-950/20",
+    };
+  }
+
+  if (activity.participant?.verifiedStart) {
+    return {
+      label: "Ongoing",
+      helper: "Start verified",
+      badgeClass: "border border-sky-500/40 bg-sky-500/15 text-sky-100",
+      railClass: "bg-sky-400",
+      cardClass: "border-sky-500/35 bg-sky-950/20",
+    };
+  }
+
+  return {
+    label: "Pending Start",
+    helper: "Verify start",
+    badgeClass: "border border-violet-500/40 bg-violet-500/15 text-violet-100",
+    railClass: "bg-violet-400",
+    cardClass: "border-violet-500/35 bg-violet-950/20",
+  };
 }
 
 function formatPoint(point?: MapPoint | null) {
@@ -925,6 +859,82 @@ async function sha256Hex(input: string | ArrayBuffer) {
 function shortenHash(hash: string, size = 8) {
   if (!hash) return "Pending";
   return `${hash.slice(0, size)}...${hash.slice(-size)}`;
+}
+
+function parseTokenUnits(amount: number | string, decimals: number) {
+  const amountText = String(amount).trim();
+
+  if (!/^\d+(\.\d+)?$/.test(amountText)) {
+    throw new Error("Token amount must be a positive decimal value.");
+  }
+
+  const [wholePart, fractionalPart = ""] = amountText.split(".");
+
+  if (fractionalPart.length > decimals) {
+    throw new Error(`TRIPIX supports at most ${decimals} decimal places.`);
+  }
+
+  return BigInt(`${wholePart}${fractionalPart.padEnd(decimals, "0")}`);
+}
+
+function getClientErrorMessage(error: unknown, fallback: string) {
+  const errorText =
+    error instanceof Error
+      ? error.message
+      : error && typeof error === "object"
+      ? JSON.stringify(error)
+      : String(error || "");
+
+  if (errorText.includes("no record of a prior credit")) {
+    return "Your connected wallet needs devnet SOL for transaction fees. Add devnet SOL, then try again.";
+  }
+
+  if (error instanceof Error && error.message && error.message !== "Unexpected error") {
+    return error.message;
+  }
+
+  if (error && typeof error === "object") {
+    const wrappedError = "error" in error ? (error as { error?: unknown }).error : null;
+
+    if (wrappedError instanceof Error && wrappedError.message) {
+      return wrappedError.message;
+    }
+
+    if (wrappedError && typeof wrappedError === "object" && "message" in wrappedError) {
+      const message = String((wrappedError as { message?: unknown }).message || "");
+      if (message) return message;
+    }
+
+    if ("message" in error) {
+      const message = String((error as { message?: unknown }).message || "");
+      if (message && message !== "Unexpected error") return message;
+    }
+  }
+
+  return fallback;
+}
+
+function isPublicImageUrl(value: string) {
+  return /^https?:\/\//i.test(value);
+}
+
+async function uploadProofPhoto(file: File, userId: string, prefix: string) {
+  const rawExtension = file.name.split(".").pop() || "jpg";
+  const extension = rawExtension.replace(/[^a-z0-9]/gi, "").toLowerCase() || "jpg";
+  const photoPath = `checkins/${userId}/${prefix}-${Date.now()}.${extension}`;
+  const { error } = await supabase.storage
+    .from("checkin-photos")
+    .upload(photoPath, file, {
+      contentType: file.type || "image/jpeg",
+      upsert: false,
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  const { data } = supabase.storage.from("checkin-photos").getPublicUrl(photoPath);
+  return data.publicUrl;
 }
 
 function createAuthUserFromSession(
@@ -1302,7 +1312,7 @@ function ConfirmationModal({
 function getRequiredAuthorityName(category: CategoryType) {
   switch (category) {
     case "Hiking":
-      return "Open Demo Hosting";
+      return "Hike Master";
     case "Falls":
       return "Waterfall Expertise";
     case "Beach":
@@ -1755,7 +1765,7 @@ export default function TravelQuestMVP({
   onLogout,
 }: TravelQuestMVPProps) {
   const { connection } = useConnection();
-  const { publicKey, connected } = useWallet();
+  const { publicKey, connected, sendTransaction, signTransaction } = useWallet();
   const tripixMint = process.env.NEXT_PUBLIC_TRIPIX_MINT_ADDRESS || "";
   const solanaNetwork = process.env.NEXT_PUBLIC_SOLANA_NETWORK || "devnet";
   const profileVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -1838,6 +1848,9 @@ export default function TravelQuestMVP({
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [confirmationDialog, setConfirmationDialog] =
     useState<ConfirmationDialog | null>(null);
+  const [eventStartPreviewPostId, setEventStartPreviewPostId] = useState<
+    string | null
+  >(null);
   const [profileEditing, setProfileEditing] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileName, setProfileName] = useState(
@@ -1945,6 +1958,8 @@ export default function TravelQuestMVP({
     createEmptyCheckInState
   );
   const [checkInPhotoFile, setCheckInPhotoFile] = useState<File | null>(null);
+  const [hikeProofPhotoFile, setHikeProofPhotoFile] = useState<File | null>(null);
+  const [hikeProofPhotoName, setHikeProofPhotoName] = useState("");
   const [liveGps, setLiveGps] = useState<LiveGpsFix | null>(null);
   const [gpsTracking, setGpsTracking] = useState(false);
   const gpsWatchIdRef = useRef<number | null>(null);
@@ -2097,6 +2112,8 @@ export default function TravelQuestMVP({
       ),
     [currentGpsPoint, selectedTrailheadPoint, liveGps?.accuracy]
   );
+  const trailheadReadyToStart =
+    hikeSession.currentTrailheadMatched || trailheadGeofenceStatus.inside;
 
   const nextTrail = useMemo(
     () =>
@@ -2126,6 +2143,24 @@ export default function TravelQuestMVP({
       (post) => post.postType === "event" && post.participant?.joined
     );
   }, [feedPosts]);
+  const eventStartPreviewPost = useMemo(
+    () =>
+      eventStartPreviewPostId
+        ? feedPosts.find((post) => post.id === eventStartPreviewPostId) || null
+        : null,
+    [eventStartPreviewPostId, feedPosts]
+  );
+  const eventStartPreviewStatus = useMemo(
+    () =>
+      eventStartPreviewPost
+        ? getGeofenceStatus(
+            currentGpsPoint,
+            eventStartPreviewPost.initialPoint,
+            liveGps?.accuracy
+          )
+        : null,
+    [currentGpsPoint, eventStartPreviewPost, liveGps?.accuracy]
+  );
 
   const parsedCapacity = Number(eventForm.capacity || 0);
   const parsedStake = Number(eventForm.stakeAmount || 0);
@@ -2201,7 +2236,6 @@ export default function TravelQuestMVP({
   };
   const canHostEvent = useCallback(
     (category: CategoryType) => {
-      if (category === "Hiking") return true;
       return (
         hostingAuthority.find((item) => item.category === category)?.authorized ||
         false
@@ -2449,6 +2483,243 @@ export default function TravelQuestMVP({
     [loadWalletState, refreshOnChainTripixBalance, sessionUser.id, showNotification]
   );
 
+  const transferTripixToTreasury = useCallback(
+    async (amount: number, title: string) => {
+      if (!publicKey) {
+        showNotification(
+          "Wallet not connected",
+          "Connect your wallet before locking TRIPIX.",
+          "error"
+        );
+        return null;
+      }
+
+      if (!tripixMint) {
+        showNotification(
+          "TRIPIX mint missing",
+          "Configure NEXT_PUBLIC_TRIPIX_MINT_ADDRESS before sending TRIPIX.",
+          "error"
+        );
+        return null;
+      }
+
+      let snapshot: TreasurySnapshotResponse = {};
+
+      try {
+        const response = await fetch("/api/tripix/treasury");
+        snapshot = (await response.json()) as TreasurySnapshotResponse;
+
+        if (!response.ok || !snapshot.treasury) {
+          throw new Error(snapshot.error || "Could not load the system wallet.");
+        }
+
+        const mint = new PublicKey(snapshot.treasury.mint);
+        const configuredMint = new PublicKey(tripixMint);
+
+        if (!mint.equals(configuredMint)) {
+          throw new Error("The treasury mint does not match the configured TRIPIX mint.");
+        }
+
+        const treasury = new PublicKey(snapshot.treasury.treasury);
+        const sourceAccount = await getAssociatedTokenAddress(mint, publicKey);
+        const treasuryAccount = await getAssociatedTokenAddress(mint, treasury);
+        const sourceAccountInfo = await connection.getAccountInfo(sourceAccount);
+
+        if (!sourceAccountInfo) {
+          throw new Error("Your connected wallet does not have a TRIPIX token account.");
+        }
+
+        const treasuryAccountInfo = await connection.getAccountInfo(treasuryAccount);
+        const rawAmount = parseTokenUnits(amount, snapshot.treasury.decimals);
+        const transaction = new Transaction();
+        const parsedSourceAccount = await connection.getParsedAccountInfo(sourceAccount);
+        const sourceData = parsedSourceAccount.value?.data;
+        const sourceTokenAmount =
+          sourceData && "parsed" in sourceData
+            ? sourceData.parsed.info.tokenAmount.amount
+            : null;
+
+        if (sourceTokenAmount !== null && BigInt(sourceTokenAmount) < rawAmount) {
+          throw new Error("Your connected wallet does not have enough on-chain TRIPIX.");
+        }
+
+        if (!treasuryAccountInfo) {
+          transaction.add(
+            createAssociatedTokenAccountInstruction(
+              publicKey,
+              treasuryAccount,
+              treasury,
+              mint
+            )
+          );
+        }
+
+        transaction.add(
+          createTransferCheckedInstruction(
+            sourceAccount,
+            mint,
+            treasuryAccount,
+            publicKey,
+            rawAmount,
+            snapshot.treasury.decimals
+          )
+        );
+
+        const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+        transaction.feePayer = publicKey;
+        transaction.recentBlockhash = latestBlockhash.blockhash;
+
+        showNotification(
+          "Approve wallet transfer",
+          `${title}: send ${amount} TRIPIX to the TravelQuest system wallet on ${solanaNetwork}.`,
+          "info"
+        );
+
+        let signature: string;
+
+        if (signTransaction) {
+          const signedTransaction = await signTransaction(transaction);
+          signature = await connection.sendRawTransaction(
+            signedTransaction.serialize(),
+            {
+              preflightCommitment: "confirmed",
+              skipPreflight: false,
+            }
+          );
+        } else {
+          signature = await sendTransaction(transaction, connection, {
+            preflightCommitment: "confirmed",
+            skipPreflight: false,
+          });
+        }
+
+        await connection.confirmTransaction(
+          {
+            signature,
+            blockhash: latestBlockhash.blockhash,
+            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+          },
+          "confirmed"
+        );
+        await refreshOnChainTripixBalance();
+
+        showNotification(
+          "Stake locked",
+          `Sent ${amount} TRIPIX to the system wallet.`,
+          "success"
+        );
+
+        return signature;
+      } catch (error) {
+        showNotification(
+          "System wallet transfer failed",
+          getClientErrorMessage(
+            error,
+            "The connected wallet could not send TRIPIX. Check that this wallet has TRIPIX and enough devnet SOL for fees."
+          ),
+          "error"
+        );
+        return null;
+      }
+    },
+    [
+      connection,
+      publicKey,
+      refreshOnChainTripixBalance,
+      sendTransaction,
+      signTransaction,
+      showNotification,
+      solanaNetwork,
+      tripixMint,
+    ]
+  );
+
+  const burnEventStakeFromTreasury = useCallback(
+    async ({
+      amount,
+      title,
+      sourceReferenceId,
+    }: {
+      amount: number;
+      title: string;
+      sourceReferenceId: string;
+    }) => {
+      const { session, error: sessionError } = await supabase.auth
+        .getSession()
+        .then(({ data, error }) => ({ session: data.session, error }))
+        .catch((error: Error) => ({ session: null, error }));
+
+      if (sessionError || !session?.access_token) {
+        if (sessionError) {
+          await supabase.auth.signOut({ scope: "local" });
+        }
+        showNotification(
+          "Burn not sent",
+          "Sign in again so the system wallet can burn the event reserve.",
+          "error"
+        );
+        return null;
+      }
+
+      const response = await fetch("/api/tripix/treasury", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          action: "burn",
+          amount,
+          userId: sessionUser.id,
+          sourceReferenceId,
+          txType: "EVENT_BURN",
+          title,
+          description: "10% event stake burned from the TravelQuest Treasury.",
+        }),
+      });
+      let payload: TreasuryRewardResponse = {};
+
+      try {
+        payload = (await response.clone().json()) as TreasuryRewardResponse;
+      } catch {
+        const text = await response.clone().text();
+        payload = {
+          error:
+            text?.trim() ||
+            response.statusText ||
+            "The treasury endpoint did not return a readable response.",
+        };
+      }
+
+      if (!response.ok || !payload.ok) {
+        showNotification(
+          "Burn not sent",
+          payload.error || "The system wallet could not burn TRIPIX.",
+          "error"
+        );
+        return null;
+      }
+
+      if (payload.transaction) {
+        setBurnHistory((prev) => [
+          mapWalletTransactionRow(payload.transaction as WalletTransactionRow),
+          ...prev,
+        ]);
+      }
+
+      showNotification(
+        "TRIPIX burned",
+        `System wallet burned ${amount} TRIPIX for this event.`,
+        "success"
+      );
+      await loadWalletState();
+      await refreshOnChainTripixBalance();
+
+      return payload;
+    },
+    [loadWalletState, refreshOnChainTripixBalance, sessionUser.id, showNotification]
+  );
+
   const loadProfileStats = useCallback(async () => {
     const { data, error } = await supabase
       .from("profile_stats")
@@ -2572,11 +2843,12 @@ export default function TravelQuestMVP({
 
     if (achievementsError) {
       showNotification("Achievements unavailable", achievementsError.message, "warning");
+      setAchievements([]);
       return;
     }
 
     if (!achievementRows || achievementRows.length === 0) {
-      setAchievements(fallbackAchievements);
+      setAchievements([]);
       return;
     }
 
@@ -2647,7 +2919,7 @@ export default function TravelQuestMVP({
       .eq("user_id", sessionUser.id);
 
     if (error || !data || data.length === 0) {
-      setHostingAuthority(fallbackHostingAuthority);
+      setHostingAuthority([]);
       return;
     }
 
@@ -2770,91 +3042,26 @@ export default function TravelQuestMVP({
     [authUser, loadProfileStats, sessionUser, showNotification]
   );
 
-  const advanceAchievements = useCallback(
-    async (category: CategoryType) => {
-      const { data: achievementRows, error: achievementError } = await supabase
-        .from("achievements")
-        .select("id, name, category, tier, target, description, grants_authority")
-        .or(`category.eq.${category},grants_authority.eq.${category}`);
+  const refreshAchievementProgress = useCallback(async () => {
+    const { error } = await supabase.rpc("refresh_user_achievement_progress", {
+      p_user_id: sessionUser.id,
+    });
 
-      if (achievementError || !achievementRows || achievementRows.length === 0) {
-        showNotification(
-          "Achievement progress not saved",
-          achievementError?.message ||
-            "No database achievements match this completion.",
-          "warning"
-        );
-        return;
-      }
+    if (error) {
+      showNotification("Achievement progress not saved", error.message, "warning");
+      return;
+    }
 
-      const achievementIds = (achievementRows as AchievementRow[]).map(
-        (achievement) => achievement.id
-      );
-      const { data: userRows, error: userRowsError } = await supabase
-        .from("user_achievements")
-        .select("achievement_id, progress, unlocked")
-        .eq("user_id", sessionUser.id)
-        .in("achievement_id", achievementIds);
-
-      if (userRowsError) {
-        showNotification(
-          "Achievement progress not saved",
-          userRowsError.message,
-          "warning"
-        );
-        return;
-      }
-
-      const currentProgress = new Map(
-        ((userRows || []) as UserAchievementRow[]).map((row) => [
-          row.achievement_id,
-          row,
-        ])
-      );
-      const now = new Date().toISOString();
-      const saveResults = await Promise.all(
-        (achievementRows as AchievementRow[]).map((achievement) => {
-          const current = currentProgress.get(achievement.id);
-          const currentValue = current?.progress || 0;
-          const nextProgress = Math.min(currentValue + 1, achievement.target);
-          const nextUnlocked = Boolean(current?.unlocked) || nextProgress >= achievement.target;
-
-          return supabase.from("user_achievements").upsert(
-            {
-              user_id: sessionUser.id,
-              achievement_id: achievement.id,
-              progress: nextProgress,
-              unlocked: nextUnlocked,
-              ...(!current?.unlocked && nextUnlocked ? { unlocked_at: now } : {}),
-              updated_at: now,
-            },
-            { onConflict: "user_id,achievement_id" }
-          );
-        })
-      );
-      const saveError = saveResults.find((result) => result.error)?.error;
-
-      if (saveError) {
-        showNotification(
-          "Achievement progress not saved",
-          saveError.message,
-          "warning"
-        );
-        return;
-      }
-
-      await loadAchievements();
-      await loadHostingAuthority();
-      await loadProfileStats();
-    },
-    [
-      loadAchievements,
-      loadHostingAuthority,
-      loadProfileStats,
-      sessionUser.id,
-      showNotification,
-    ]
-  );
+    await loadAchievements();
+    await loadHostingAuthority();
+    await loadProfileStats();
+  }, [
+    loadAchievements,
+    loadHostingAuthority,
+    loadProfileStats,
+    sessionUser.id,
+    showNotification,
+  ]);
 
   const handleLogout = () => {
     setCheckInState(createEmptyCheckInState());
@@ -3413,6 +3620,19 @@ export default function TravelQuestMVP({
     }
   };
 
+  const handleHikePhotoProofChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setHikeProofPhotoFile(file);
+    setHikeProofPhotoName(file.name);
+    showNotification(
+      "Hike photo ready",
+      "This photo will be saved and used on the next successful hike post.",
+      "success"
+    );
+  };
+
   const handleSimpleCheckIn = () => {
     if (!requireWalletConnected("claim TRIPIX rewards")) return;
     if (!selectedDestination) {
@@ -3471,27 +3691,16 @@ export default function TravelQuestMVP({
       };
 
       const timestamp = new Date().toISOString();
-      const photoExtension = photoFile.name.split(".").pop() || "jpg";
-      const photoPath = `checkins/${sessionUser.id}-${Date.now()}.${photoExtension}`;
-      const { error: uploadError } = await supabase.storage
-        .from("checkin-photos")
-        .upload(photoPath, photoFile, {
-          contentType: photoFile.type || "image/jpeg",
-          upsert: true,
-        });
       let photoUrl = "";
 
-      if (uploadError) {
+      try {
+        photoUrl = await uploadProofPhoto(photoFile, sessionUser.id, "checkin");
+      } catch {
         showNotification(
-          "Photo storage skipped",
-          "The photo hash will still be used for proof. Apply the storage policy migration to save photo files.",
+          "Photo storage failed",
+          "The photo hash will still be used for proof, but the file could not be saved.",
           "warning"
         );
-      } else {
-        const { data: photoPublicUrl } = supabase.storage
-          .from("checkin-photos")
-          .getPublicUrl(photoPath);
-        photoUrl = photoPublicUrl.publicUrl;
       }
       const metadataPayload = JSON.stringify({
         user: authUser.publicKey,
@@ -3609,7 +3818,7 @@ export default function TravelQuestMVP({
         achievement: `${selectedDestination.category} Progress +1`,
         likes: 0,
         comments: 0,
-        image: "Travel story",
+        image: photoUrl || selectedDestination.imageUrl || "Travel story",
         postType: "standard",
       });
       if (savedPost && isUuid(savedPost.id)) {
@@ -3621,18 +3830,12 @@ export default function TravelQuestMVP({
           })
           .eq("id", checkinRow.id);
       }
-      const achievementCategories = isCituDemoDestination(selectedDestination)
-        ? eventAuthorityCategories
-        : [selectedDestination.category];
-
-      for (const achievementCategory of achievementCategories) {
-        await advanceAchievements(achievementCategory);
-      }
+      await refreshAchievementProgress();
 
       if (isCituDemoDestination(selectedDestination)) {
         showNotification(
-          "Event authority unlocked",
-          "CIT-U completion unlocked authority for Hiking, Falls, Beach, and Island events.",
+          "Authority progress updated",
+          "CIT-U completion added progress toward each database-backed hosting authority.",
           "success"
         );
       }
@@ -3662,10 +3865,47 @@ export default function TravelQuestMVP({
     });
   };
 
-  const handleUtilityAction = (action: UtilityAction) => {
+  const applyCurrentLocationToEventStart = useCallback(
+    async (showErrors = true) => {
+      const fix = liveGps || (await getFreshGpsFix());
+      if (!fix) return false;
+
+      const point = {
+        ...fix.point,
+        name: "Current location start",
+      };
+
+      setEventRoute((prev) => {
+        const pointMoved =
+          prev.startPoint?.lat !== point.lat || prev.startPoint?.lng !== point.lng;
+
+        return {
+          ...prev,
+          startPoint: point,
+          distanceKm: pointMoved ? null : prev.distanceKm,
+        };
+      });
+      clearEventFieldError("startPoint");
+
+      if (showErrors) {
+        showNotification(
+          "Start location set",
+          "Your current GPS location is now the event initial location.",
+          "success"
+        );
+      }
+
+      return true;
+    },
+    [clearEventFieldError, getFreshGpsFix, liveGps, showNotification]
+  );
+
+  const handleUtilityAction = async (action: UtilityAction) => {
     if (!requireWalletConnected("use TRIPIX utility actions")) return;
     if (action.type === "CREATE_EVENT") {
       setUtilityView("createEvent");
+      startLiveGpsTracking(false);
+      void applyCurrentLocationToEventStart();
       return;
     }
 
@@ -3777,6 +4017,34 @@ export default function TravelQuestMVP({
     }
   };
 
+  const handleOpenEventStartPreview = async (postId: string) => {
+    if (!requireWalletConnected("verify event progress")) return;
+    const eventPost = feedPosts.find((post) => post.id === postId);
+
+    if (eventPost && !hasEventStarted(eventPost)) {
+      showNotification(
+        "Event starts later",
+        "This event has not started yet.",
+        "warning"
+      );
+      return;
+    }
+
+    if (eventPost && isEventExpired(eventPost)) {
+      showNotification(
+        "Event expired",
+        "This event has already expired.",
+        "error"
+      );
+      return;
+    }
+
+    if (!eventPost) return;
+    startLiveGpsTracking(false);
+    void getFreshGpsFix();
+    setEventStartPreviewPostId(postId);
+  };
+
   const handleVerifyEventStart = async (postId: string) => {
     if (!requireWalletConnected("verify event progress")) return;
     const eventPost = feedPosts.find((post) => post.id === postId);
@@ -3832,6 +4100,7 @@ export default function TravelQuestMVP({
       `You are inside the start geofence at ${formatPoint(eventPost.initialPoint)}.`,
       "success"
     );
+    setEventStartPreviewPostId(null);
   };
 
   const handleCompleteEvent = async (postId: string) => {
@@ -3935,6 +4204,7 @@ export default function TravelQuestMVP({
         })
         .eq("id", postId);
     }, 0);
+    void refreshAchievementProgress();
   };
 
   const handleFailEvent = async (postId: string) => {
@@ -4433,23 +4703,40 @@ export default function TravelQuestMVP({
 
     if (!savedPost) return;
 
-    void recordWalletTransaction({
+    const stakeTransferSignature = await transferTripixToTreasury(
+      parsedStake,
+      `Create Event: ${eventForm.title}`
+    );
+
+    if (!stakeTransferSignature) {
+      await supabase.from("posts").delete().eq("id", savedPost.id);
+      setFeedPosts((prev) => prev.filter((post) => post.id !== savedPost.id));
+      showNotification(
+        "Event not posted",
+        "The event was removed because the TRIPIX stake was not locked.",
+        "warning"
+      );
+      return;
+    }
+
+    await recordWalletTransaction({
       txType: "CREATE_EVENT",
       amount: parsedStake,
       direction: "debit",
       title: `Created Event: ${eventForm.title}`,
-      description: "Locked event stake.",
+      description: `Locked event stake in the system wallet. Signature: ${shortenHash(
+        stakeTransferSignature
+      )}`,
       referenceId: savedPost.id,
     });
-    void recordWalletTransaction({
-      txType: "EVENT_BURN",
+
+    const burnPayload = await burnEventStakeFromTreasury({
       amount: settlement.burnAmount,
-      direction: "debit",
-      title: `Reserved Burn Pool: ${eventForm.title}`,
-      description: "10% burn portion recorded from the locked stake.",
-      referenceId: savedPost.id,
-      affectsBalance: false,
+      title: `Event Burn: ${eventForm.title}`,
+      sourceReferenceId: savedPost.id,
     });
+
+    if (!burnPayload) return;
 
     setEventForm({
       title: "",
@@ -4501,24 +4788,24 @@ export default function TravelQuestMVP({
     });
   };
 
-  const handleVerifyTrailhead = async () => {
-    if (!requireWalletConnected("start a hiking session")) return;
+  const verifyTrailheadAtCurrentLocation = async (showSuccess = true) => {
     if (!selectedTrail) {
       showNotification(
         "No trail selected",
         "Add and select a trail before starting a hike.",
         "warning"
       );
-      return;
+      return null;
     }
     startLiveGpsTracking(false);
     const geofenceResult = await ensureWithinGeofence(
       selectedTrailheadPoint,
       "trailhead initial location"
     );
-    if (!geofenceResult) return;
+    if (!geofenceResult) return null;
 
     let hikeSessionId = hikeSession.id;
+    const timestamp = new Date().toISOString();
 
     if (!hikeSessionId && isUuid(selectedTrail.id)) {
       const { data } = await supabase
@@ -4535,6 +4822,15 @@ export default function TravelQuestMVP({
         .select("id")
         .single();
       hikeSessionId = data?.id || null;
+    } else if (hikeSessionId) {
+      void supabase
+        .from("hike_sessions")
+        .update({
+          trailhead_verified: true,
+          current_trailhead_matched: true,
+          updated_at: timestamp,
+        })
+        .eq("id", hikeSessionId);
     }
 
     if (hikeSessionId && isUuid(selectedTrail.trailhead.id)) {
@@ -4553,11 +4849,21 @@ export default function TravelQuestMVP({
       currentTrailheadMatched: true,
       trailheadVerified: true,
     }));
-    showNotification(
-      "Trailhead verified",
-      `You are inside the ${selectedTrail.trailhead.name} geofence.`,
-      "success"
-    );
+
+    if (showSuccess) {
+      showNotification(
+        "Trailhead verified",
+        `You are inside the ${selectedTrail.trailhead.name} geofence.`,
+        "success"
+      );
+    }
+
+    return hikeSessionId || "verified";
+  };
+
+  const handleVerifyTrailhead = async () => {
+    if (!requireWalletConnected("start a hiking session")) return;
+    await verifyTrailheadAtCurrentLocation();
   };
 
   const handleStartHike = async () => {
@@ -4570,8 +4876,14 @@ export default function TravelQuestMVP({
       );
       return;
     }
-    if (!hikeSession.currentTrailheadMatched) return;
     let hikeSessionId = hikeSession.id;
+
+    if (!hikeSession.currentTrailheadMatched) {
+      const verifiedSessionId = await verifyTrailheadAtCurrentLocation(false);
+      if (!verifiedSessionId) return;
+      hikeSessionId =
+        verifiedSessionId === "verified" ? hikeSessionId : verifiedSessionId;
+    }
 
     if (isUuid(selectedTrail.id)) {
       if (hikeSessionId) {
@@ -4627,6 +4939,14 @@ export default function TravelQuestMVP({
     if (!selectedTrail) return;
     if (!hikeSession.active) return;
     if (hikeSession.reachedDestinationIds.includes(destinationId)) return;
+    if (!hikeProofPhotoFile) {
+      showNotification(
+        "Hike photo required",
+        "Add a photo proof before marking this destination reached.",
+        "warning"
+      );
+      return;
+    }
 
     const destination = selectedTrail.destinations.find(
       (item) => item.id === destinationId
@@ -4669,6 +4989,21 @@ export default function TravelQuestMVP({
     );
 
     let sessionDestinationId: string | null = null;
+    let hikePhotoUrl = "";
+
+    try {
+      hikePhotoUrl = await uploadProofPhoto(
+        hikeProofPhotoFile,
+        sessionUser.id,
+        "hike"
+      );
+    } catch {
+      showNotification(
+        "Hike photo not saved",
+        "The reward can continue, but the feed post will use a text fallback.",
+        "warning"
+      );
+    }
 
     if (hikeSession.id && isUuid(destinationId)) {
       const { data } = await supabase
@@ -4737,16 +5072,20 @@ export default function TravelQuestMVP({
       achievement: isTarget ? "Target Completed" : "Checkpoint Reached",
       likes: 0,
       comments: 0,
-      image: destination.name,
+      image: hikePhotoUrl || destination.name,
       postType: "standard",
     });
+    if (hikePhotoUrl) {
+      setHikeProofPhotoFile(null);
+      setHikeProofPhotoName("");
+    }
     if (savedPost && sessionDestinationId) {
       void supabase
         .from("hike_session_destinations")
         .update({ created_post_id: savedPost.id })
         .eq("id", sessionDestinationId);
     }
-    void advanceAchievements("Hiking");
+    void refreshAchievementProgress();
 
     if (isTarget && nextTrail && !canProceedToNextTrail) {
       showNotification(
@@ -4807,6 +5146,123 @@ export default function TravelQuestMVP({
           dialog={confirmationDialog}
           onCancel={() => setConfirmationDialog(null)}
         />
+      ) : null}
+      {eventStartPreviewPost ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-white">
+                  Verify Start Location
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-zinc-300">
+                  Move your green GPS pin inside the start geofence before
+                  starting this hike event.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEventStartPreviewPostId(null)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
+                aria-label="Close start verification"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {eventStartPreviewPost.initialPoint ? (
+              <div className="mt-4 space-y-4">
+                <MapPreview
+                  startLat={eventStartPreviewPost.initialPoint.lat}
+                  startLng={eventStartPreviewPost.initialPoint.lng}
+                  destLat={eventStartPreviewPost.initialPoint.lat}
+                  destLng={eventStartPreviewPost.initialPoint.lng}
+                  title={
+                    eventStartPreviewPost.eventTitle ||
+                    eventStartPreviewPost.destination
+                  }
+                  subtitle={formatPoint(eventStartPreviewPost.initialPoint)}
+                  height={340}
+                  geofenceLat={eventStartPreviewPost.initialPoint.lat}
+                  geofenceLng={eventStartPreviewPost.initialPoint.lng}
+                  geofenceRadiusMeters={
+                    eventStartPreviewStatus?.effectiveRadiusMeters || 180
+                  }
+                  geofenceLabel="Event start geofence"
+                  currentLat={currentGpsPoint?.lat}
+                  currentLng={currentGpsPoint?.lng}
+                />
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <InfoTile
+                    label="Your GPS"
+                    value={
+                      currentGpsPoint
+                        ? `${currentGpsPoint.lat.toFixed(
+                            5
+                          )}, ${currentGpsPoint.lng.toFixed(5)}`
+                        : "Waiting for GPS"
+                    }
+                  />
+                  <InfoTile
+                    label="Start Target"
+                    value={`${eventStartPreviewPost.initialPoint.lat.toFixed(
+                      5
+                    )}, ${eventStartPreviewPost.initialPoint.lng.toFixed(5)}`}
+                  />
+                  <InfoTile
+                    label="Geofence"
+                    value={
+                      eventStartPreviewStatus?.available
+                        ? `${
+                            eventStartPreviewStatus.inside
+                              ? "Inside"
+                              : "Outside"
+                          } · ${formatMeters(
+                            eventStartPreviewStatus.distanceMeters
+                          )}`
+                        : "Waiting for GPS"
+                    }
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                This event does not have a start location saved.
+              </div>
+            )}
+
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <Button
+                variant="outline"
+                className="rounded-2xl border-zinc-600 bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
+                onClick={() => setEventStartPreviewPostId(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className={`rounded-2xl font-medium ${
+                  eventStartPreviewStatus?.inside
+                    ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                    : "bg-zinc-700 text-zinc-300"
+                }`}
+                disabled={!eventStartPreviewStatus?.inside}
+                onClick={() =>
+                  void handleVerifyEventStart(eventStartPreviewPost.id)
+                }
+              >
+                <Flag className="mr-2 h-4 w-4" />
+                {eventStartPreviewStatus?.inside
+                  ? "Confirm Start"
+                  : "Move Inside Geofence"}
+              </Button>
+            </div>
+          </motion.div>
+        </div>
       ) : null}
 
       <div className="mx-auto flex max-w-7xl gap-6 p-4 md:p-6">
@@ -5049,6 +5505,16 @@ export default function TravelQuestMVP({
                               sizes="(min-width: 1280px) 50vw, 100vw"
                               className="h-full w-full object-cover"
                             />
+                          ) : post.postType !== "event" &&
+                            isPublicImageUrl(post.image) ? (
+                            <Image
+                              src={post.image}
+                              alt={`${post.destination} proof photo`}
+                              fill
+                              unoptimized
+                              sizes="(min-width: 1280px) 50vw, 100vw"
+                              className="h-full w-full object-cover"
+                            />
                           ) : (
                             <div className="flex h-full items-end justify-between p-5">
                               <div>
@@ -5261,7 +5727,9 @@ export default function TravelQuestMVP({
                                       !hasEventStarted(post) ||
                                       isEventExpired(post)
                                     }
-                                    onClick={() => handleVerifyEventStart(post.id)}
+                                    onClick={() =>
+                                      void handleOpenEventStartPreview(post.id)
+                                    }
                                   >
                                     <Flag
                                       className={`mr-2 h-4 w-4 ${getActionIconClass(
@@ -5333,36 +5801,62 @@ export default function TravelQuestMVP({
                           You have not joined an event yet.
                         </div>
                       ) : (
-                        joinedActivities.map((activity) => (
-                          <div
-                            key={activity.id}
-                            className="rounded-2xl border border-zinc-700 bg-zinc-800 p-4"
-                          >
-                            <p className="text-sm font-semibold text-white">
-                              {activity.eventTitle}
-                            </p>
-                            <p className="mt-1 text-sm text-zinc-300">
-                              Starts {activity.eventDate} · {activity.startTime}
-                            </p>
-                            <p className="mt-1 text-sm text-zinc-300">
-                              Expires {activity.expirationDate || activity.eventDate} ·{" "}
-                              {activity.endTime}
-                            </p>
-                            <p className="mt-1 text-xs leading-6 text-zinc-300">
-                              {formatPoint(activity.initialPoint)} →{" "}
-                              {formatPoint(activity.destinationPoint)}
-                            </p>
-                            <p className="mt-1 text-xs text-zinc-300">
-                              Distance: {formatDistance(activity.routeDistanceKm)}
-                            </p>
-                            <p className="mt-1 text-xs text-zinc-300">
-                              Start:{" "}
-                              {activity.participant?.verifiedStart ? "Verified" : "Pending"} ·
-                              Completion:{" "}
-                              {activity.participant?.completed ? "Done" : "Pending"}
-                            </p>
-                          </div>
-                        ))
+                        joinedActivities.map((activity) => {
+                          const status = getJoinedEventStatus(
+                            activity,
+                            hasEventStarted(activity),
+                            isEventExpired(activity)
+                          );
+
+                          return (
+                            <div
+                              key={activity.id}
+                              className={`relative overflow-hidden rounded-2xl border p-4 ${status.cardClass}`}
+                            >
+                              <div
+                                aria-hidden="true"
+                                className={`absolute inset-y-0 left-0 w-1.5 ${status.railClass}`}
+                              />
+                              <div className="pl-3">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                  <p className="text-sm font-semibold text-white">
+                                    {activity.eventTitle}
+                                  </p>
+                                  <span
+                                    className={`w-fit shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${status.badgeClass}`}
+                                  >
+                                    {status.label}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs font-medium text-zinc-200">
+                                  {status.helper}
+                                </p>
+                                <p className="mt-2 text-sm text-zinc-300">
+                                  Starts {activity.eventDate} · {activity.startTime}
+                                </p>
+                                <p className="mt-1 text-sm text-zinc-300">
+                                  Expires {activity.expirationDate || activity.eventDate} ·{" "}
+                                  {activity.endTime}
+                                </p>
+                                <p className="mt-1 text-xs leading-6 text-zinc-300">
+                                  {formatPoint(activity.initialPoint)} →{" "}
+                                  {formatPoint(activity.destinationPoint)}
+                                </p>
+                                <p className="mt-1 text-xs text-zinc-300">
+                                  Distance: {formatDistance(activity.routeDistanceKm)}
+                                </p>
+                                <p className="mt-1 text-xs text-zinc-300">
+                                  Start:{" "}
+                                  {activity.participant?.verifiedStart
+                                    ? "Verified"
+                                    : "Pending"}{" "}
+                                  · Completion:{" "}
+                                  {activity.participant?.completed ? "Done" : "Pending"}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })
                       )}
                     </CardContent>
                   </Card>
@@ -5996,6 +6490,16 @@ export default function TravelQuestMVP({
 
                             <div className="grid gap-3 sm:grid-cols-2">
                               <InfoTile
+                                label="Your GPS"
+                                value={
+                                  currentGpsPoint
+                                    ? `${currentGpsPoint.lat.toFixed(
+                                        5
+                                      )}, ${currentGpsPoint.lng.toFixed(5)}`
+                                    : "Tap Verify Trailhead"
+                                }
+                              />
+                              <InfoTile
                                 label="Trailhead"
                                 value={`${selectedTrailheadPoint.lat.toFixed(
                                   5
@@ -6052,18 +6556,20 @@ export default function TravelQuestMVP({
 
                         <Button
                           className={`rounded-2xl font-medium ${
-                            hikeSession.currentTrailheadMatched
+                            trailheadReadyToStart
                               ? "bg-emerald-600 text-white hover:bg-emerald-500"
                               : "bg-zinc-800 text-zinc-300"
                           }`}
                           onClick={handleStartHike}
-                          disabled={!hikeSession.currentTrailheadMatched}
+                          disabled={!trailheadReadyToStart}
                         >
                           <PlayCircle className="mr-2 h-4 w-4 shrink-0" />
                           <span className="whitespace-normal break-words text-center leading-tight">
-                            {hikeSession.currentTrailheadMatched
+                            {trailheadReadyToStart
                               ? "Start Hike"
-                              : "Verify Trailhead First"}
+                              : trailheadGeofenceStatus.available
+                                ? "Go Inside Geofence"
+                                : "Verify Trailhead First"}
                           </span>
                         </Button>
                       </div>
@@ -6105,6 +6611,46 @@ export default function TravelQuestMVP({
                           label="Status"
                           value={hikeSession.status}
                         />
+                      </div>
+
+                      <div className="rounded-2xl border border-zinc-700 bg-zinc-800 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-white">
+                              Hike proof photo
+                            </p>
+                            <p className="mt-1 truncate text-sm text-zinc-300">
+                              {hikeProofPhotoName ||
+                                "Add a fresh photo before marking the next stop reached."}
+                            </p>
+                          </div>
+                          <Button
+                            className={`shrink-0 rounded-2xl border font-medium ${getActionStateClass(
+                              hikeProofPhotoFile ? "done" : "active"
+                            )}`}
+                            asChild
+                            variant="outline"
+                          >
+                            <label>
+                              <Camera
+                                className={`mr-2 h-4 w-4 ${getActionIconClass(
+                                  hikeProofPhotoFile ? "done" : "active"
+                                )}`}
+                              />
+                              {hikeProofPhotoFile ? "Photo Ready" : "Add Photo"}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                className="sr-only"
+                                onChange={(event) => {
+                                  handleHikePhotoProofChange(event);
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                          </Button>
+                        </div>
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-2">
@@ -6158,7 +6704,11 @@ export default function TravelQuestMVP({
                                     : "bg-sky-600 text-white hover:bg-sky-500"
                                 }`}
                                 variant={reached ? "outline" : "default"}
-                                disabled={!hikeSession.active || reached}
+                                disabled={
+                                  !hikeSession.active ||
+                                  reached ||
+                                  !hikeProofPhotoFile
+                                }
                                 onClick={() =>
                                   handleReachDestination(destination.id)
                                 }
@@ -6166,6 +6716,8 @@ export default function TravelQuestMVP({
                                 <span className="break-words whitespace-normal text-center leading-tight">
                                   {reached
                                     ? "Reached"
+                                    : !hikeProofPhotoFile
+                                      ? "Add Photo First"
                                     : `Mark ${destination.name} Reached`}
                                 </span>
                               </Button>
@@ -6916,14 +7468,25 @@ export default function TravelQuestMVP({
                           </div>
 
                           <div className="space-y-2 md:col-span-2">
-                            <div>
-                              <h3 className="text-base font-semibold text-white">
-                                2. Route
-                              </h3>
-                              <p className="mt-1 text-sm text-zinc-300">
-                                Pick the initial location and destination. The
-                                distance is calculated automatically.
-                              </p>
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <h3 className="text-base font-semibold text-white">
+                                  2. Route
+                                </h3>
+                                <p className="mt-1 text-sm text-zinc-300">
+                                  Pick the initial location and destination. The
+                                  distance is calculated automatically.
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="shrink-0 rounded-2xl border-sky-500/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/20"
+                                onClick={() => void applyCurrentLocationToEventStart()}
+                              >
+                                <MapPin className="mr-2 h-4 w-4" />
+                                Use Current Location
+                              </Button>
                             </div>
 
                             <div
@@ -7601,61 +8164,63 @@ export default function TravelQuestMVP({
                         Joined events will appear here.
                       </div>
                     ) : (
-                      joinedActivities.map((activity) => (
-                        <div
-                          key={activity.id}
-                          className="rounded-2xl border border-zinc-700 bg-zinc-800 p-4"
-                        >
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="min-w-0">
-                              <p className="break-words text-base font-semibold text-white">
-                                {activity.eventTitle}
-                              </p>
-                              <p className="mt-1 text-sm leading-6 text-zinc-300">
-                                {formatPoint(activity.initialPoint)} →{" "}
-                                {formatPoint(activity.destinationPoint)}
-                              </p>
-                              <p className="text-sm text-zinc-300">
-                                Starts {activity.eventDate} · {activity.startTime}
-                              </p>
-                              <p className="text-sm text-zinc-300">
-                                Expires {activity.expirationDate || activity.eventDate} ·{" "}
-                                {activity.endTime}
-                              </p>
-                              <p className="text-sm text-zinc-300">
-                                Distance: {formatDistance(activity.routeDistanceKm)}
-                              </p>
-                              <p className="text-sm text-zinc-300">
-                                Stake: {activity.stakeAmount} · Pool: {activity.rewardPool} ·
-                                Remaining: {activity.remainingRewardPool ?? activity.rewardPool}
-                              </p>
-                              <p className="text-sm text-zinc-300">
-                                Reward per completion: {activity.rewardPerFinisher}
-                              </p>
-                            </div>
+                      joinedActivities.map((activity) => {
+                        const status = getJoinedEventStatus(
+                          activity,
+                          hasEventStarted(activity),
+                          isEventExpired(activity)
+                        );
 
-                            <span
-                              className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
-                                activity.participant?.completed
-                                  ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                                  : isEventExpired(activity)
-                                  ? "border border-zinc-600 bg-zinc-700 text-zinc-300"
-                                  : !hasEventStarted(activity)
-                                  ? "border border-amber-500/30 bg-amber-500/10 text-amber-200"
-                                  : "border border-sky-500/30 bg-sky-500/10 text-sky-200"
-                              }`}
-                            >
-                              {activity.participant?.completed
-                                ? "Completed"
-                                : isEventExpired(activity)
-                                ? "Expired"
-                                : !hasEventStarted(activity)
-                                ? "Scheduled"
-                                : "Joined"}
-                            </span>
+                        return (
+                          <div
+                            key={activity.id}
+                            className={`relative overflow-hidden rounded-2xl border p-4 ${status.cardClass}`}
+                          >
+                            <div
+                              aria-hidden="true"
+                              className={`absolute inset-y-0 left-0 w-1.5 ${status.railClass}`}
+                            />
+                            <div className="flex flex-col gap-3 pl-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <p className="break-words text-base font-semibold text-white">
+                                  {activity.eventTitle}
+                                </p>
+                                <p className="mt-1 text-xs font-medium text-zinc-200">
+                                  {status.helper}
+                                </p>
+                                <p className="mt-2 text-sm leading-6 text-zinc-300">
+                                  {formatPoint(activity.initialPoint)} →{" "}
+                                  {formatPoint(activity.destinationPoint)}
+                                </p>
+                                <p className="text-sm text-zinc-300">
+                                  Starts {activity.eventDate} · {activity.startTime}
+                                </p>
+                                <p className="text-sm text-zinc-300">
+                                  Expires {activity.expirationDate || activity.eventDate} ·{" "}
+                                  {activity.endTime}
+                                </p>
+                                <p className="text-sm text-zinc-300">
+                                  Distance: {formatDistance(activity.routeDistanceKm)}
+                                </p>
+                                <p className="text-sm text-zinc-300">
+                                  Stake: {activity.stakeAmount} · Pool: {activity.rewardPool} ·
+                                  Remaining:{" "}
+                                  {activity.remainingRewardPool ?? activity.rewardPool}
+                                </p>
+                                <p className="text-sm text-zinc-300">
+                                  Reward per completion: {activity.rewardPerFinisher}
+                                </p>
+                              </div>
+
+                              <span
+                                className={`w-fit shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${status.badgeClass}`}
+                              >
+                                {status.label}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </CardContent>
                 </Card>

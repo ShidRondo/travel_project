@@ -598,6 +598,10 @@ async function insertRewardTransaction(
 }
 
 async function handleBurn(request: Request, body: TreasuryRequestBody) {
+  if (!hasValidTreasuryKey(request)) {
+    return handleAuthenticatedEventBurn(request, body);
+  }
+
   assertTreasuryKey(request);
 
   const amount = readAmount(body.amount);
@@ -622,5 +626,111 @@ async function handleBurn(request: Request, body: TreasuryRequestBody) {
     action: "burn",
     signature: burn.signature,
     burn,
+  });
+}
+
+async function handleAuthenticatedEventBurn(
+  request: Request,
+  body: TreasuryRequestBody
+) {
+  const amount = readAmount(body.amount);
+  const sourceReferenceId = body.sourceReferenceId;
+
+  if (body.txType && body.txType !== "EVENT_BURN") {
+    return NextResponse.json(
+      { error: "Authenticated burns are only supported for event burns." },
+      { status: 403 }
+    );
+  }
+
+  if (!sourceReferenceId) {
+    return NextResponse.json(
+      { error: "Event reference is required for a burn." },
+      { status: 400 }
+    );
+  }
+
+  const supabase = getSupabaseForRequest(request);
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  if (body.userId && body.userId !== user.id) {
+    return NextResponse.json(
+      { error: "Authenticated burns can only target the signed-in user." },
+      { status: 403 }
+    );
+  }
+
+  const admin = getSupabaseAdmin();
+  const { data: post } = await admin
+    .from("posts")
+    .select("user_id, burn_amount")
+    .eq("id", sourceReferenceId)
+    .eq("post_type", "event")
+    .maybeSingle();
+  const postRow = post as
+    | { user_id: string; burn_amount: number | string | null }
+    | null;
+
+  if (!postRow || postRow.user_id !== user.id) {
+    return NextResponse.json(
+      { error: "Event burn source was not found for this user." },
+      { status: 403 }
+    );
+  }
+
+  const expectedBurnAmount = Number(postRow.burn_amount || 0);
+
+  if (amount > expectedBurnAmount) {
+    return NextResponse.json(
+      { error: "Requested burn exceeds the event burn reserve." },
+      { status: 400 }
+    );
+  }
+
+  const { data: existingBurn } = await admin
+    .from("wallet_transactions")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("tx_type", "EVENT_BURN")
+    .eq("reference_id", sourceReferenceId)
+    .maybeSingle();
+
+  if (existingBurn) {
+    return NextResponse.json(
+      { error: "This event burn has already been sent." },
+      { status: 409 }
+    );
+  }
+
+  const burn = await burnTripixFromTreasury({ amount });
+  const { data: transaction } = await admin
+    .from("wallet_transactions")
+    .insert({
+      user_id: user.id,
+      tx_type: "EVENT_BURN",
+      amount,
+      direction: "debit",
+      title: body.title || "TRIPIX event burn",
+      description:
+        body.description ||
+        `Burned from the TravelQuest Treasury token account. Signature: ${burn.signature}`,
+      reference_id: sourceReferenceId,
+    })
+    .select("id, tx_type, amount, direction, title, description, reference_id, created_at")
+    .single();
+
+  return NextResponse.json({
+    ok: true,
+    action: "burn",
+    signature: burn.signature,
+    burn,
+    transaction,
   });
 }

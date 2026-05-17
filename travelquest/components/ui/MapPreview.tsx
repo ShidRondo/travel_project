@@ -1,6 +1,8 @@
 "use client";
 
-import { Circle, MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
+import { useEffect } from "react";
+import L from "leaflet";
+import { Circle, MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import "@/components/ui/LeafletMarkerFix";
 
 type MapPreviewProps = {
@@ -22,6 +24,43 @@ type MapPreviewProps = {
   currentLat?: number;
   currentLng?: number;
 };
+
+const currentLocationIcon = L.divIcon({
+  className: "",
+  html: `
+    <div style="
+      width: 22px;
+      height: 22px;
+      border-radius: 9999px;
+      background: #22c55e;
+      border: 3px solid white;
+      box-shadow: 0 0 0 8px rgba(34, 197, 94, 0.22), 0 10px 24px rgba(0,0,0,0.35);
+    "></div>
+  `,
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
+  popupAnchor: [0, -12],
+});
+
+function FitMapToVisiblePoints({ points }: { points: [number, number][] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (points.length === 0) return;
+
+    if (points.length === 1) {
+      map.setView(points[0], Math.max(map.getZoom(), 14));
+      return;
+    }
+
+    map.fitBounds(points, {
+      padding: [36, 36],
+      maxZoom: 15,
+    });
+  }, [map, points]);
+
+  return null;
+}
 
 export default function MapPreview({
   startLat,
@@ -56,6 +95,11 @@ export default function MapPreview({
     destinationGeofenceLng !== undefined &&
     destinationGeofenceRadiusMeters !== undefined;
   const showCurrent = currentLat !== undefined && currentLng !== undefined;
+  const visiblePoints = [
+    [destLat, destLng] as [number, number],
+    ...(showStartMarker ? [[startLat, startLng] as [number, number]] : []),
+    ...(showCurrent ? [[currentLat, currentLng] as [number, number]] : []),
+  ];
 
   return (
     <div className="overflow-hidden rounded-[24px] border border-zinc-700">
@@ -66,6 +110,7 @@ export default function MapPreview({
         style={{ height: `${height}px`, width: "100%" }}
       >
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <FitMapToVisiblePoints points={visiblePoints} />
 
         {showGeofence ? (
           <Circle
@@ -127,7 +172,7 @@ export default function MapPreview({
         </Marker>
 
         {showCurrent ? (
-          <Marker position={[currentLat, currentLng]}>
+          <Marker position={[currentLat, currentLng]} icon={currentLocationIcon}>
             <Popup>
               <div className="text-sm">
                 <div className="font-semibold">Your current GPS</div>
