@@ -41,6 +41,7 @@ import {
   Trophy,
   Upload,
   User,
+  UserPlus,
   Users,
   Wallet,
   X,
@@ -59,6 +60,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase/client";
 import ConnectWalletButton from "@/components/wallet/ConnectWalletButton";
+import travelQuestLogo from "@/trpx_logo.png";
 
 const MapPreview = dynamic(() => import("@/components/ui/MapPreview"), {
   ssr: false,
@@ -78,6 +80,7 @@ type TabKey =
   | "wallet"
   | "utility"
   | "achievements"
+  | "friends"
   | "profile";
 
 type MapPoint = {
@@ -180,6 +183,65 @@ type AchievementRow = {
 
 type UserAchievementRow = {
   achievement_id: string;
+  progress: number;
+  unlocked: boolean;
+};
+
+type FriendStatus = "none" | "pending" | "accepted" | "declined";
+type FriendDirection = "none" | "incoming" | "outgoing";
+
+type TravelerSearchResult = {
+  user_id: string;
+  display_name: string | null;
+  full_name?: string | null;
+  bio: string | null;
+  avatar_url: string | null;
+  location: string | null;
+  posts_count: number | null;
+  places_count: number | null;
+  badges_count: number | null;
+  friend_request_id: string | null;
+  friendship_status: FriendStatus | null;
+  friendship_direction: FriendDirection | null;
+  friend_since: string | null;
+};
+
+type FriendListRow = {
+  user_id: string;
+  display_name: string | null;
+  bio: string | null;
+  avatar_url: string | null;
+  location: string | null;
+  posts_count: number | null;
+  places_count: number | null;
+  badges_count: number | null;
+  friend_request_id: string | null;
+  friend_since: string | null;
+};
+
+type TravelerCard = {
+  userId: string;
+  displayName: string;
+  bio: string;
+  avatarUrl: string;
+  location: string;
+  postsCount: number;
+  placesCount: number;
+  badgesCount: number;
+  friendRequestId: string | null;
+  friendshipStatus: FriendStatus;
+  friendshipDirection: FriendDirection;
+  friendSince: string | null;
+};
+
+type TravelerAchievementRow = {
+  achievement_id: string;
+  name: string;
+  category: string;
+  tier: "Beginner" | "Advanced" | "Expert";
+  target: number;
+  description: string;
+  grants_authority: string | null;
   progress: number;
   unlocked: boolean;
 };
@@ -1088,11 +1150,17 @@ function ScreenTitle({
   subtitle: string;
 }) {
   return (
-    <div className="mb-4 space-y-1">
-      <h2 className="text-xl font-semibold tracking-tight text-white sm:text-2xl">
-        {title}
-      </h2>
-      <p className="max-w-2xl text-sm leading-6 text-zinc-300">{subtitle}</p>
+    <div className="mb-5 flex items-start gap-3">
+      <div
+        aria-hidden="true"
+        className="mt-1 h-10 w-1 rounded-full bg-cyan-400"
+      />
+      <div className="min-w-0 space-y-1">
+        <h2 className="text-xl font-semibold tracking-tight text-white sm:text-2xl">
+          {title}
+        </h2>
+        <p className="max-w-2xl text-sm leading-6 text-zinc-300">{subtitle}</p>
+      </div>
     </div>
   );
 }
@@ -1107,9 +1175,9 @@ function StatPill({
   label: string;
 }) {
   return (
-    <div className="min-h-[140px] min-w-0 rounded-3xl border border-zinc-700 bg-zinc-800 px-6 py-6 shadow-sm">
+    <div className="min-h-[140px] min-w-0 rounded-2xl border border-zinc-700/80 bg-zinc-900/80 px-6 py-6 shadow-sm shadow-black/10">
       <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
-        <Icon className="h-5 w-5 shrink-0 text-zinc-100" />
+        <Icon className="h-5 w-5 shrink-0 text-cyan-200" />
         <span className="truncate leading-none">{label}</span>
       </div>
       <div className="mt-6 text-4xl font-bold leading-none text-white">{value}</div>
@@ -1127,12 +1195,12 @@ function CompactStatPill({
   label: string;
 }) {
   return (
-    <div className="min-w-0 min-h-[112px] rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-4 shadow-sm">
-      <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-300">
-        <Icon className="h-4 w-4 shrink-0 text-zinc-100" />
+    <div className="min-h-[96px] min-w-0 rounded-xl border border-white/10 bg-zinc-900/95 px-4 py-4 shadow-sm shadow-black/20">
+      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-zinc-300">
+        <Icon className="h-4 w-4 shrink-0 text-cyan-200" />
         <span className="truncate">{label}</span>
       </div>
-      <div className="mt-3 break-words text-xl font-semibold leading-tight text-white sm:text-2xl">
+      <div className="mt-3 break-words font-sans text-2xl font-semibold leading-none text-white">
         {value}
       </div>
     </div>
@@ -1268,7 +1336,7 @@ function ConfirmationModal({
       <motion.div
         initial={{ opacity: 0, y: 12, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        className="w-full max-w-md rounded-[28px] border border-zinc-700 bg-zinc-900 p-6 shadow-2xl"
+        className="w-full max-w-md rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirmation-title"
@@ -1377,6 +1445,67 @@ function mapAchievementRows(
       grantsAuthority: achievement.grants_authority as CategoryType | undefined,
     };
   });
+}
+
+function mapTravelerRow(
+  row: TravelerSearchResult | (FriendListRow & Partial<TravelerSearchResult>)
+): TravelerCard {
+  return {
+    userId: row.user_id,
+    displayName: row.display_name || "Traveler",
+    bio: row.bio || "",
+    avatarUrl: row.avatar_url || "",
+    location: row.location || "Location not added",
+    postsCount: row.posts_count || 0,
+    placesCount: row.places_count || 0,
+    badgesCount: row.badges_count || 0,
+    friendRequestId: row.friend_request_id || null,
+    friendshipStatus: row.friendship_status || "accepted",
+    friendshipDirection: row.friendship_direction || "none",
+    friendSince: row.friend_since || null,
+  };
+}
+
+function mapTravelerAchievementRows(
+  rows: TravelerAchievementRow[]
+): AchievementItem[] {
+  return rows.map((row) => ({
+    id: row.achievement_id,
+    name: row.name,
+    category: row.category,
+    tier: row.tier,
+    progress: row.progress || 0,
+    target: row.target,
+    unlocked: Boolean(row.unlocked),
+    description: row.description,
+    grantsAuthority: row.grants_authority as CategoryType | undefined,
+  }));
+}
+
+function getFriendStatusLabel(traveler: TravelerCard) {
+  if (traveler.friendshipStatus === "accepted") return "Friend";
+  if (traveler.friendshipStatus === "pending") {
+    return traveler.friendshipDirection === "incoming"
+      ? "Request received"
+      : "Request sent";
+  }
+  if (traveler.friendshipStatus === "declined") return "Declined";
+  return "Not friends";
+}
+
+function getFriendStatusClass(traveler: TravelerCard) {
+  if (traveler.friendshipStatus === "accepted") {
+    return "border-emerald-400/30 bg-emerald-500/10 text-emerald-100";
+  }
+  if (traveler.friendshipStatus === "pending") {
+    return traveler.friendshipDirection === "incoming"
+      ? "border-amber-400/30 bg-amber-500/10 text-amber-100"
+      : "border-sky-400/30 bg-sky-500/10 text-sky-100";
+  }
+  if (traveler.friendshipStatus === "declined") {
+    return "border-rose-400/30 bg-rose-500/10 text-rose-100";
+  }
+  return "border-zinc-700 bg-zinc-800 text-zinc-200";
 }
 
 function mapWalletTransactionRow(row: WalletTransactionRow): BurnHistoryItem {
@@ -1779,6 +1908,16 @@ export default function TravelQuestMVP({
   );
   const [tab, setTab] = useState<TabKey>("feed");
   const [search, setSearch] = useState("");
+  const [travelerSearch, setTravelerSearch] = useState("");
+  const [travelerResults, setTravelerResults] = useState<TravelerCard[]>([]);
+  const [friendList, setFriendList] = useState<TravelerCard[]>([]);
+  const [selectedTraveler, setSelectedTraveler] = useState<TravelerCard | null>(
+    null
+  );
+  const [selectedTravelerAchievements, setSelectedTravelerAchievements] =
+    useState<AchievementItem[]>([]);
+  const [peopleLoading, setPeopleLoading] = useState(false);
+  const [friendActionLoadingId, setFriendActionLoadingId] = useState("");
   const [inAppTripixAmount, setInAppTripixAmount] = useState(0);
   const [onChainTripixAmount, setOnChainTripixAmount] = useState(0);
   const [onChainTripixLoading, setOnChainTripixLoading] = useState(false);
@@ -2222,6 +2361,7 @@ export default function TravelQuestMVP({
     { key: "wallet", label: "Balance", icon: Wallet },
     { key: "utility", label: "TRIPIX Utility", icon: Flame },
     { key: "achievements", label: "Achievements", icon: Award },
+    { key: "friends", label: "Friends", icon: Users },
     { key: "profile", label: "Profile", icon: User },
   ];
 
@@ -2932,6 +3072,165 @@ export default function TravelQuestMVP({
     );
   }, [sessionUser.id]);
 
+  const loadFriendList = useCallback(async () => {
+    const { data, error } = await supabase.rpc("get_friend_list");
+
+    if (error) {
+      if (!isMissingRelationError(error)) {
+        showNotification("Friend list unavailable", error.message, "warning");
+      }
+      setFriendList([]);
+      return;
+    }
+
+    setFriendList(((data || []) as FriendListRow[]).map(mapTravelerRow));
+  }, [showNotification]);
+
+  const loadTravelerAchievements = useCallback(
+    async (traveler: TravelerCard | null) => {
+      if (!traveler) {
+        setSelectedTravelerAchievements([]);
+        return;
+      }
+
+      if (traveler.friendshipStatus !== "accepted") {
+        setSelectedTravelerAchievements([]);
+        return;
+      }
+
+      const { data, error } = await supabase.rpc("get_traveler_achievements", {
+        p_user_id: traveler.userId,
+      });
+
+      if (error) {
+        showNotification("Achievements unavailable", error.message, "warning");
+        setSelectedTravelerAchievements([]);
+        return;
+      }
+
+      setSelectedTravelerAchievements(
+        mapTravelerAchievementRows((data || []) as TravelerAchievementRow[])
+      );
+    },
+    [showNotification]
+  );
+
+  const searchTravelers = useCallback(
+    async (query: string) => {
+      setPeopleLoading(true);
+      const { data, error } = await supabase.rpc("search_travelers", {
+        p_query: query,
+      });
+      setPeopleLoading(false);
+
+      if (error) {
+        if (isMissingRelationError(error)) {
+          showNotification(
+            "Friends setup needed",
+            "Apply the latest Supabase schema so traveler search and friend requests are available.",
+            "warning"
+          );
+        } else {
+          showNotification("Traveler search unavailable", error.message, "warning");
+        }
+        setTravelerResults([]);
+        return;
+      }
+
+      const mappedResults = ((data || []) as TravelerSearchResult[]).map(
+        mapTravelerRow
+      );
+      setTravelerResults(mappedResults);
+      setSelectedTraveler((current) => {
+        if (!current) return mappedResults[0] || null;
+        return mappedResults.find((item) => item.userId === current.userId) || current;
+      });
+    },
+    [showNotification]
+  );
+
+  const updateTravelerInLists = useCallback((nextTraveler: TravelerCard) => {
+    setTravelerResults((prev) =>
+      prev.map((item) =>
+        item.userId === nextTraveler.userId ? nextTraveler : item
+      )
+    );
+    setFriendList((prev) => {
+      const withoutTraveler = prev.filter(
+        (item) => item.userId !== nextTraveler.userId
+      );
+      return nextTraveler.friendshipStatus === "accepted"
+        ? [nextTraveler, ...withoutTraveler]
+        : withoutTraveler;
+    });
+    setSelectedTraveler((current) =>
+      current?.userId === nextTraveler.userId ? nextTraveler : current
+    );
+  }, []);
+
+  const handleSendFriendRequest = async (traveler: TravelerCard) => {
+    setFriendActionLoadingId(traveler.userId);
+    const { data, error } = await supabase
+      .from("friend_requests")
+      .insert({
+        requester_id: sessionUser.id,
+        addressee_id: traveler.userId,
+        status: "pending",
+      })
+      .select("id")
+      .single();
+    setFriendActionLoadingId("");
+
+    if (error) {
+      showNotification("Request not sent", error.message, "error");
+      return;
+    }
+
+    updateTravelerInLists({
+      ...traveler,
+      friendRequestId: data?.id || traveler.friendRequestId,
+      friendshipStatus: "pending",
+      friendshipDirection: "outgoing",
+    });
+    showNotification("Friend request sent", `Sent a request to ${traveler.displayName}.`, "success");
+  };
+
+  const handleFriendRequestResponse = async (
+    traveler: TravelerCard,
+    status: "accepted" | "declined"
+  ) => {
+    if (!traveler.friendRequestId) return;
+
+    setFriendActionLoadingId(traveler.userId);
+    const respondedAt = new Date().toISOString();
+    const { error } = await supabase
+      .from("friend_requests")
+      .update({
+        status,
+        responded_at: respondedAt,
+        updated_at: respondedAt,
+      })
+      .eq("id", traveler.friendRequestId);
+    setFriendActionLoadingId("");
+
+    if (error) {
+      showNotification("Request not updated", error.message, "error");
+      return;
+    }
+
+    const nextTraveler = {
+      ...traveler,
+      friendshipStatus: status,
+      friendshipDirection: "incoming" as FriendDirection,
+      friendSince: status === "accepted" ? respondedAt : null,
+    };
+    updateTravelerInLists(nextTraveler);
+    if (status === "accepted") {
+      void loadTravelerAchievements(nextTraveler);
+      showNotification("Friend added", `${traveler.displayName} is now in your friend list.`, "success");
+    }
+  };
+
   useEffect(() => {
     const loadFeedPosts = async () => {
       const { data, error } = await supabase
@@ -3006,6 +3305,7 @@ export default function TravelQuestMVP({
       void loadWalletState();
       void loadHostingAuthority();
       void loadCurrentLocationClaim();
+      void loadFriendList();
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
@@ -3016,10 +3316,23 @@ export default function TravelQuestMVP({
     loadDestinations,
     loadTrails,
     loadHostingAuthority,
+    loadFriendList,
     loadWalletState,
     loadProfileStats,
     loadProofRecords,
   ]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void searchTravelers(travelerSearch);
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [searchTravelers, travelerSearch]);
+
+  useEffect(() => {
+    void loadTravelerAchievements(selectedTraveler);
+  }, [loadTravelerAchievements, selectedTraveler]);
 
   const saveFeedPost = useCallback(
     async (post: FeedPost) => {
@@ -5125,7 +5438,7 @@ export default function TravelQuestMVP({
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="min-h-screen bg-[#05070a] text-zinc-100">
       {notifications.length > 0 ? (
         <div className="fixed right-4 top-4 z-50 flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-3">
           {notifications.map((notification) => (
@@ -5152,7 +5465,7 @@ export default function TravelQuestMVP({
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
+            className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -5265,13 +5578,30 @@ export default function TravelQuestMVP({
         </div>
       ) : null}
 
-      <div className="mx-auto flex max-w-7xl gap-6 p-4 md:p-6">
-        <aside className="hidden w-64 shrink-0 lg:block">
+      <div className="mx-auto flex max-w-[1440px] gap-6 p-4 pb-24 md:p-6 lg:pb-8">
+        <aside className="hidden w-72 shrink-0 lg:block">
           <div className="sticky top-6 space-y-4">
-            <div className="rounded-[28px] border border-zinc-800 bg-zinc-900 p-5 shadow-sm">
+            <div className="rounded-3xl border border-white/10 bg-zinc-950/85 p-5 shadow-2xl shadow-black/25 backdrop-blur">
               <div className="mb-6 space-y-2">
-                <div className="text-2xl font-bold tracking-tight text-white">
-                  TravelQuest
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/30 bg-cyan-400/10">
+                    <Image
+                      src={travelQuestLogo}
+                      alt=""
+                      width={34}
+                      height={34}
+                      className="h-8 w-8 object-contain"
+                      priority
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-2xl font-bold tracking-tight text-white">
+                      TravelQuest
+                    </div>
+                    <div className="text-xs font-medium uppercase text-cyan-200">
+                      Quest dashboard
+                    </div>
+                  </div>
                 </div>
                 <p className="text-sm leading-6 text-zinc-300">
                   Verified travel quests, community events, TRIPIX rewards, and
@@ -5288,16 +5618,16 @@ export default function TravelQuestMVP({
                     <Button
                       key={item.key}
                       variant="ghost"
-                      className={`w-full justify-start rounded-2xl border transition-all ${
+                      className={`h-11 w-full justify-start rounded-xl border px-3 transition-all ${
                         active
-                          ? "border-sky-500/40 bg-sky-500/15 text-white shadow-sm hover:bg-sky-500/15"
-                          : "border-transparent bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                          ? "border-cyan-400/40 bg-cyan-400/12 text-white shadow-sm shadow-cyan-950/40 hover:bg-cyan-400/12"
+                          : "border-transparent bg-transparent text-zinc-300 hover:border-white/10 hover:bg-white/[0.05] hover:text-white"
                       }`}
                       onClick={() => setTab(item.key)}
                     >
                       <Icon
                         className={`mr-3 h-4 w-4 ${
-                          active ? "text-sky-300" : "text-zinc-100"
+                          active ? "text-cyan-200" : "text-zinc-300"
                         }`}
                       />
                       {item.label}
@@ -5306,7 +5636,7 @@ export default function TravelQuestMVP({
                 })}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-zinc-700 bg-zinc-800 p-4">
+              <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-sm shadow-black/20">
                 <div className="mb-4 flex items-center gap-3">
                   <ProfileAvatar
                     name={authUser.displayName}
@@ -5338,7 +5668,7 @@ export default function TravelQuestMVP({
                   <ConnectWalletButton />
                 </div>
                 <Button
-                  className="mt-2 w-full rounded-2xl border-zinc-600 bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
+                  className="mt-2 w-full rounded-xl border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
                   variant="outline"
                   onClick={handleLogout}
                 >
@@ -5356,7 +5686,27 @@ export default function TravelQuestMVP({
             animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
           >
-            <div className="rounded-[24px] border border-zinc-800 bg-zinc-900 p-4 shadow-sm lg:hidden">
+            <div className="rounded-3xl border border-white/10 bg-zinc-950/90 p-4 shadow-2xl shadow-black/20 backdrop-blur lg:hidden">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/30 bg-cyan-400/10">
+                  <Image
+                    src={travelQuestLogo}
+                    alt=""
+                    width={30}
+                    height={30}
+                    className="h-7 w-7 object-contain"
+                    priority
+                  />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-lg font-bold leading-tight text-white">
+                    TravelQuest
+                  </p>
+                  <p className="text-xs font-medium uppercase text-cyan-200">
+                    Quest dashboard
+                  </p>
+                </div>
+              </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 items-center gap-3">
                   <ProfileAvatar
@@ -5379,7 +5729,7 @@ export default function TravelQuestMVP({
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <ConnectWalletButton />
                   <Button
-                    className="rounded-2xl border-zinc-600 bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
+                    className="rounded-xl border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
                     variant="outline"
                     onClick={handleLogout}
                   >
@@ -5388,17 +5738,51 @@ export default function TravelQuestMVP({
                   </Button>
                 </div>
               </div>
+              <div className="-mx-1 mt-4 flex gap-2 overflow-x-auto px-1 pb-1">
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const active = tab === item.key;
+
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={`flex h-10 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition ${
+                        active
+                          ? "border-cyan-400/40 bg-cyan-400/15 text-white"
+                          : "border-white/10 bg-white/[0.04] text-zinc-300"
+                      }`}
+                      onClick={() => setTab(item.key)}
+                    >
+                      <Icon
+                        className={`h-4 w-4 ${
+                          active ? "text-cyan-200" : "text-zinc-400"
+                        }`}
+                      />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <section className="overflow-hidden rounded-[30px] border border-zinc-800 bg-zinc-900 shadow-sm">
-              <div className="bg-gradient-to-br from-zinc-800 to-zinc-950 px-6 py-8 text-white md:px-8">
-                <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-2xl shadow-black/20">
+              <Image
+                src={travelQuestLogo}
+                alt=""
+                width={320}
+                height={320}
+                className="pointer-events-none absolute -right-16 -top-20 h-72 w-72 opacity-[0.035]"
+                priority
+              />
+              <div className="relative px-6 py-8 text-white md:px-8">
+                <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                   <div className="max-w-3xl space-y-3">
-                    <Badge className="rounded-full border border-zinc-600 bg-zinc-800/80 px-3 py-1 text-white hover:bg-zinc-800/80">
+                    <Badge className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-cyan-100 hover:bg-cyan-400/10">
                       Devnet Token Balance + Stake Pools
                     </Badge>
                     <div className="space-y-2">
-                      <h1 className="max-w-3xl text-3xl font-semibold tracking-tight md:text-4xl">
+                      <h1 className="max-w-3xl text-3xl font-semibold tracking-tight text-white md:text-4xl">
                         Wallet required. Devnet TRIPIX powers every trip.
                       </h1>
                       <p className="max-w-2xl text-sm leading-7 text-zinc-200 md:text-base">
@@ -5409,7 +5793,7 @@ export default function TravelQuestMVP({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 md:w-[420px]">
+                  <div className="grid grid-cols-2 gap-3 md:w-[360px]">
                     <CompactStatPill icon={Compass} label="Trips" value={12} />
                     <CompactStatPill icon={Trophy} label="Badges" value={7} />
                     <CompactStatPill
@@ -5436,7 +5820,7 @@ export default function TravelQuestMVP({
                   />
 
                   {feedPosts.length === 0 ? (
-                    <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                    <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                       <CardContent className="flex min-h-[260px] flex-col items-center justify-center p-8 text-center">
                         <div className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800">
                           <ImageIcon className="h-6 w-6 text-zinc-100" />
@@ -5455,7 +5839,7 @@ export default function TravelQuestMVP({
                   {feedPosts.map((post) => (
                     <Card
                       key={post.id}
-                      className="overflow-hidden rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm"
+                      className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm"
                     >
                       <CardContent className="p-0">
                         <div className="flex items-center justify-between px-5 py-4">
@@ -5495,7 +5879,7 @@ export default function TravelQuestMVP({
                           </div>
                         </div>
 
-                        <div className="relative mx-5 h-72 overflow-hidden rounded-[24px] border border-zinc-700 bg-gradient-to-br from-zinc-800 to-zinc-700">
+                        <div className="relative mx-5 h-72 overflow-hidden rounded-lg border border-zinc-700 bg-gradient-to-br from-zinc-800 to-zinc-700">
                           {post.postType === "event" && post.eventImage ? (
                             <Image
                               src={post.eventImage}
@@ -5786,7 +6170,7 @@ export default function TravelQuestMVP({
                 </div>
 
                 <div className="space-y-5">
-                  <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                  <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-lg text-white">
                         Current Joined Events
@@ -5861,7 +6245,7 @@ export default function TravelQuestMVP({
                     </CardContent>
                   </Card>
 
-                  <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                  <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-lg text-white">
                         Quick Check-In
@@ -5955,7 +6339,7 @@ export default function TravelQuestMVP({
                 />
 
                 <Card
-                  className={`rounded-[28px] border shadow-sm ${
+                  className={`rounded-lg border shadow-sm ${
                     currentLocationClaimed
                       ? "border-emerald-500/30 bg-emerald-500/10"
                       : "border-sky-500/30 bg-sky-500/10"
@@ -6012,7 +6396,7 @@ export default function TravelQuestMVP({
                   </CardContent>
                 </Card>
 
-                <div className="rounded-[28px] border border-zinc-800 bg-zinc-900 p-4 shadow-sm">
+                <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 shadow-sm">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-100" />
                     <Input
@@ -6025,7 +6409,7 @@ export default function TravelQuestMVP({
                 </div>
 
                 {filteredDestinations.length === 0 ? (
-                  <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                  <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                     <CardContent className="p-6 text-sm leading-6 text-zinc-300">
                       No destinations match this search.
                     </CardContent>
@@ -6040,7 +6424,7 @@ export default function TravelQuestMVP({
                         setSelectedDestination(destination);
                         setTab("checkin");
                       }}
-                      className="overflow-hidden rounded-[28px] border border-zinc-800 bg-zinc-900 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+                      className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-md"
                     >
                       <div className="relative h-44 overflow-hidden">
                         <Image
@@ -6090,7 +6474,7 @@ export default function TravelQuestMVP({
             )}
 
             {tab === "checkin" && !selectedDestination && (
-              <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+              <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                 <CardContent className="p-6 text-sm leading-6 text-zinc-300">
                   No destination is selected. Choose a place from Discover
                   before checking in.
@@ -6100,7 +6484,7 @@ export default function TravelQuestMVP({
 
             {tab === "checkin" && selectedDestination && (
               <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-                <Card className="overflow-hidden rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardContent className="p-0">
                     <div className="relative h-72 overflow-hidden">
                       <Image
@@ -6170,7 +6554,7 @@ export default function TravelQuestMVP({
                   </CardContent>
                 </Card>
 
-                <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg text-white">
                       Check-In
@@ -6371,7 +6755,7 @@ export default function TravelQuestMVP({
                 />
 
                 {!selectedTrail || !selectedTarget ? (
-                  <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                  <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                     <CardContent className="p-6 text-sm leading-6 text-zinc-300">
                       No trail is ready yet. Add trails, trailheads, and
                       destinations before starting a hiking session.
@@ -6379,7 +6763,7 @@ export default function TravelQuestMVP({
                   </Card>
                 ) : (
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-                  <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                  <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-lg text-white">
                         Trail Setup
@@ -6576,7 +6960,7 @@ export default function TravelQuestMVP({
                     </CardContent>
                   </Card>
 
-                  <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                  <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-lg text-white">
                         Live Hike Progress
@@ -6785,7 +7169,7 @@ export default function TravelQuestMVP({
                 />
 
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-                  <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                  <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-lg text-white">
                         Devnet TRIPIX Balance
@@ -6879,7 +7263,7 @@ export default function TravelQuestMVP({
 
                 </div>
 
-                <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg text-white">
                       Balance Activity
@@ -6933,7 +7317,7 @@ export default function TravelQuestMVP({
                 />
 
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-                  <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                  <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-lg text-white">
                         Balance Utility Summary
@@ -6966,7 +7350,7 @@ export default function TravelQuestMVP({
                   </Card>
 
                   {utilityView === "actions" ? (
-                    <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                    <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                       <CardHeader className="pb-3">
                         <CardTitle className="text-lg text-white">
                           Burn Actions
@@ -7060,7 +7444,7 @@ export default function TravelQuestMVP({
                       </CardContent>
                     </Card>
                   ) : (
-                    <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                    <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                       <CardHeader className="pb-3">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div>
@@ -7654,7 +8038,7 @@ export default function TravelQuestMVP({
                   )}
                 </div>
 
-                <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg text-white">
                       Burn History
@@ -7738,7 +8122,7 @@ export default function TravelQuestMVP({
                   {filteredAchievements.map((achievement) => (
                     <Card
                       key={achievement.id}
-                      className={`rounded-[28px] border shadow-sm ${
+                      className={`rounded-lg border shadow-sm ${
                         achievement.unlocked
                           ? "border-zinc-700 bg-zinc-900"
                           : "border-zinc-800 bg-zinc-900/80"
@@ -7818,9 +8202,372 @@ export default function TravelQuestMVP({
               </div>
             )}
 
+            {tab === "friends" && (
+              <div className="space-y-6">
+                <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5 shadow-sm md:p-6">
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-sky-500/30 bg-sky-500/10">
+                          <Users className="h-5 w-5 text-sky-100" />
+                        </div>
+                        <div className="min-w-0">
+                          <h2 className="text-xl font-semibold tracking-tight text-white sm:text-2xl">
+                            Traveler Network
+                          </h2>
+                          <p className="mt-1 max-w-2xl text-sm leading-6 text-zinc-300">
+                            Find travelers, manage requests, and review verified
+                            progress once a connection is accepted.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 sm:min-w-[320px]">
+                      <InfoTile label="Friends" value={friendList.length} />
+                      <InfoTile
+                        label="Found"
+                        value={peopleLoading ? "..." : travelerResults.length}
+                      />
+                      <InfoTile
+                        label="Selected"
+                        value={selectedTraveler ? "1" : "0"}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+                  <div className="space-y-5">
+                    <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
+                      <CardContent className="space-y-4 p-5 md:p-6">
+                        <div className="flex flex-col gap-1">
+                          <p className="text-sm font-semibold text-white">
+                            Search Travelers
+                          </p>
+                          <p className="text-sm leading-6 text-zinc-300">
+                            Search by display name or full name.
+                          </p>
+                        </div>
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-100" />
+                          <Input
+                            value={travelerSearch}
+                            onChange={(event) =>
+                              setTravelerSearch(event.target.value)
+                            }
+                            placeholder="Search for a traveler"
+                            className="rounded-2xl border-zinc-700 bg-zinc-800 pl-9 text-white placeholder:text-zinc-400"
+                          />
+                        </div>
+                        <p className="text-xs font-medium text-zinc-400">
+                          {peopleLoading
+                            ? "Searching..."
+                            : `${travelerResults.length} traveler${
+                                travelerResults.length === 1 ? "" : "s"
+                              } found`}
+                        </p>
+                      </CardContent>
+                    </Card>
+
+                    {!peopleLoading && travelerResults.length === 0 ? (
+                      <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
+                        <CardContent className="p-6 text-sm leading-6 text-zinc-300">
+                          No travelers match this search yet. Try a different
+                          name or clear the search field.
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      {travelerResults.map((traveler) => (
+                        <Card
+                          key={traveler.userId}
+                          className={`rounded-lg border bg-zinc-900 shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-700 ${
+                            selectedTraveler?.userId === traveler.userId
+                              ? "border-sky-500/40"
+                              : "border-zinc-800"
+                          }`}
+                        >
+                          <CardContent className="space-y-4 p-5">
+                            <button
+                              className="flex w-full min-w-0 items-start gap-3 text-left"
+                              onClick={() => setSelectedTraveler(traveler)}
+                            >
+                              <ProfileAvatar
+                                name={traveler.displayName}
+                                avatarUrl={traveler.avatarUrl}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="break-words text-base font-semibold text-white">
+                                    {traveler.displayName}
+                                  </p>
+                                  <span
+                                    className={`rounded-full border px-2.5 py-1 text-xs font-medium ${getFriendStatusClass(
+                                      traveler
+                                    )}`}
+                                  >
+                                    {getFriendStatusLabel(traveler)}
+                                  </span>
+                                </div>
+                                <p className="mt-1 line-clamp-2 text-sm leading-6 text-zinc-300">
+                                  {traveler.bio || "No bio added yet."}
+                                </p>
+                                <p className="mt-1 text-xs text-zinc-400">
+                                  {traveler.location}
+                                </p>
+                              </div>
+                            </button>
+
+                            <div className="grid grid-cols-3 gap-2">
+                              <InfoTile label="Posts" value={traveler.postsCount} />
+                              <InfoTile label="Places" value={traveler.placesCount} />
+                              <InfoTile label="Badges" value={traveler.badgesCount} />
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              {traveler.friendshipStatus === "none" ||
+                              traveler.friendshipStatus === "declined" ? (
+                                <Button
+                                  className="rounded-2xl bg-sky-600 text-white hover:bg-sky-500"
+                                  disabled={
+                                    friendActionLoadingId === traveler.userId
+                                  }
+                                  onClick={() =>
+                                    void handleSendFriendRequest(traveler)
+                                  }
+                                >
+                                  <UserPlus className="mr-2 h-4 w-4" />
+                                  Send Request
+                                </Button>
+                              ) : null}
+
+                              {traveler.friendshipStatus === "pending" &&
+                              traveler.friendshipDirection === "incoming" ? (
+                                <>
+                                  <Button
+                                    className="rounded-2xl bg-emerald-600 text-white hover:bg-emerald-500"
+                                    disabled={
+                                      friendActionLoadingId === traveler.userId
+                                    }
+                                    onClick={() =>
+                                      void handleFriendRequestResponse(
+                                        traveler,
+                                        "accepted"
+                                      )
+                                    }
+                                  >
+                                    Accept
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    className="rounded-2xl border-zinc-600 bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
+                                    disabled={
+                                      friendActionLoadingId === traveler.userId
+                                    }
+                                    onClick={() =>
+                                      void handleFriendRequestResponse(
+                                        traveler,
+                                        "declined"
+                                      )
+                                    }
+                                  >
+                                    Decline
+                                  </Button>
+                                </>
+                              ) : null}
+
+                              {traveler.friendshipStatus === "pending" &&
+                              traveler.friendshipDirection === "outgoing" ? (
+                                <Button
+                                  variant="outline"
+                                  className="rounded-2xl border-sky-500/40 bg-sky-500/10 text-sky-100 hover:bg-sky-500/20"
+                                  disabled
+                                >
+                                  Request Pending
+                                </Button>
+                              ) : null}
+
+                              {traveler.friendshipStatus === "accepted" ? (
+                                <Button
+                                  variant="outline"
+                                  className="rounded-2xl border-emerald-500/40 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/20"
+                                  onClick={() => setSelectedTraveler(traveler)}
+                                >
+                                  <Award className="mr-2 h-4 w-4" />
+                                  View Progress
+                                </Button>
+                              ) : null}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-5">
+                    <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-xl text-white">
+                          Friends
+                        </CardTitle>
+                        <CardDescription className="text-sm leading-6 text-zinc-300">
+                          Accepted connections with their latest TravelQuest
+                          activity summary.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {friendList.length === 0 ? (
+                          <div className="rounded-2xl border border-zinc-700 bg-zinc-800 p-4 text-sm text-zinc-300">
+                            Your accepted friends will appear here.
+                          </div>
+                        ) : (
+                          friendList.map((friend) => (
+                            <button
+                              key={friend.userId}
+                              className="flex w-full min-w-0 items-center gap-3 rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-left hover:bg-zinc-700"
+                              onClick={() => setSelectedTraveler(friend)}
+                            >
+                              <ProfileAvatar
+                                name={friend.displayName}
+                                avatarUrl={friend.avatarUrl}
+                                size="sm"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-semibold text-white">
+                                  {friend.displayName}
+                                </p>
+                                <p className="truncate text-xs text-zinc-300">
+                                  {friend.placesCount} places · {friend.badgesCount} badges
+                                </p>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-xl text-white">
+                          Traveler Details
+                        </CardTitle>
+                        <CardDescription className="text-sm leading-6 text-zinc-300">
+                          Request status, travel stats, and unlocked achievements.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {!selectedTraveler ? (
+                          <div className="rounded-2xl border border-zinc-700 bg-zinc-800 p-4 text-sm text-zinc-300">
+                            Select a traveler to review their connection status.
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-start gap-3 rounded-2xl border border-zinc-700 bg-zinc-800 p-4">
+                              <ProfileAvatar
+                                name={selectedTraveler.displayName}
+                                avatarUrl={selectedTraveler.avatarUrl}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="break-words text-base font-semibold text-white">
+                                  {selectedTraveler.displayName}
+                                </p>
+                                <p className="mt-1 text-sm text-zinc-300">
+                                  {getFriendStatusLabel(selectedTraveler)}
+                                </p>
+                                {selectedTraveler.friendSince ? (
+                                  <p className="mt-1 text-xs text-zinc-400">
+                                    Friends since{" "}
+                                    {new Date(
+                                      selectedTraveler.friendSince
+                                    ).toLocaleDateString()}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2">
+                              <InfoTile
+                                label="Posts"
+                                value={selectedTraveler.postsCount}
+                              />
+                              <InfoTile
+                                label="Places"
+                                value={selectedTraveler.placesCount}
+                              />
+                              <InfoTile
+                                label="Badges"
+                                value={selectedTraveler.badgesCount}
+                              />
+                            </div>
+
+                            {selectedTraveler.friendshipStatus === "accepted" ? (
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-sm font-semibold text-white">
+                                    Unlocked Achievements
+                                  </p>
+                                  <span className="rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-300">
+                                    {
+                                      selectedTravelerAchievements.filter(
+                                        (achievement) => achievement.unlocked
+                                      ).length
+                                    }{" "}
+                                    total
+                                  </span>
+                                </div>
+                                {selectedTravelerAchievements.length === 0 ? (
+                                  <div className="rounded-2xl border border-zinc-700 bg-zinc-800 p-4 text-sm text-zinc-300">
+                                    No achievement progress is available yet.
+                                  </div>
+                                ) : (
+                                  selectedTravelerAchievements
+                                    .filter((achievement) => achievement.unlocked)
+                                    .slice(0, 5)
+                                    .map((achievement) => (
+                                      <div
+                                        key={achievement.id}
+                                        className="rounded-2xl border border-zinc-700 bg-zinc-800 p-4"
+                                      >
+                                        <div className="flex items-center justify-between gap-3">
+                                          <p className="text-sm font-semibold text-white">
+                                            {achievement.name}
+                                          </p>
+                                          <span
+                                            className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${getTierClass(
+                                              achievement.tier
+                                            )}`}
+                                          >
+                                            {achievement.tier}
+                                          </span>
+                                        </div>
+                                        <p className="mt-1 text-xs text-zinc-300">
+                                          {achievement.category} ·{" "}
+                                          {achievement.progress}/{achievement.target}
+                                        </p>
+                                      </div>
+                                    ))
+                                )}
+                              </div>
+                            ) : (
+                              <div className="rounded-2xl border border-zinc-700 bg-zinc-800 p-4 text-sm leading-6 text-zinc-300">
+                                Achievement details unlock after the friend
+                                request is accepted.
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {tab === "profile" && (
               <div className="space-y-6">
-                <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardContent className="p-6 md:p-8">
                     <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
                       <div className="flex shrink-0 flex-col items-center gap-3">
@@ -8024,7 +8771,7 @@ export default function TravelQuestMVP({
                   </CardContent>
                 </Card>
 
-                <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-xl text-white">
                       Account Security
@@ -8050,7 +8797,7 @@ export default function TravelQuestMVP({
                   </CardContent>
                 </Card>
 
-                <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-xl text-white">
                       Proof Ledger
@@ -8103,7 +8850,7 @@ export default function TravelQuestMVP({
                   </CardContent>
                 </Card>
 
-                <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-xl text-white">
                       Hosting Authority
@@ -8148,7 +8895,7 @@ export default function TravelQuestMVP({
                   </CardContent>
                 </Card>
 
-                <Card className="rounded-[28px] border border-zinc-800 bg-zinc-900 shadow-sm">
+                <Card className="rounded-lg border border-zinc-800 bg-zinc-900 shadow-sm">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-xl text-white">
                       Current Joined Events
