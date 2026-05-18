@@ -1195,12 +1195,12 @@ function CompactStatPill({
   label: string;
 }) {
   return (
-    <div className="min-h-[96px] min-w-0 rounded-xl border border-white/10 bg-zinc-900/95 px-4 py-4 shadow-sm shadow-black/20">
+    <div className="min-h-[82px] min-w-[132px] rounded-xl border border-white/10 bg-zinc-900/95 px-4 py-3 shadow-sm shadow-black/20 sm:min-h-[96px] sm:min-w-0 sm:py-4">
       <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-zinc-300">
         <Icon className="h-4 w-4 shrink-0 text-cyan-200" />
         <span className="truncate">{label}</span>
       </div>
-      <div className="mt-3 break-words font-sans text-2xl font-semibold leading-none text-white">
+      <div className="mt-2 break-words font-sans text-xl font-semibold leading-none text-white sm:mt-3 sm:text-2xl">
         {value}
       </div>
     </div>
@@ -5775,14 +5775,14 @@ export default function TravelQuestMVP({
                 className="pointer-events-none absolute -right-16 -top-20 h-72 w-72 opacity-[0.035]"
                 priority
               />
-              <div className="relative px-6 py-8 text-white md:px-8">
-                <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-                  <div className="max-w-3xl space-y-3">
+              <div className="relative px-5 py-6 text-white sm:px-6 sm:py-8 md:px-8">
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-end">
+                  <div className="min-w-0 max-w-3xl space-y-3">
                     <Badge className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-cyan-100 hover:bg-cyan-400/10">
                       Devnet Token Balance + Stake Pools
                     </Badge>
                     <div className="space-y-2">
-                      <h1 className="max-w-3xl text-3xl font-semibold tracking-tight text-white md:text-4xl">
+                      <h1 className="max-w-3xl text-2xl font-semibold tracking-tight text-white sm:text-3xl md:text-4xl">
                         Wallet required. Devnet TRIPIX powers every trip.
                       </h1>
                       <p className="max-w-2xl text-sm leading-7 text-zinc-200 md:text-base">
@@ -5793,7 +5793,7 @@ export default function TravelQuestMVP({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 md:w-[360px]">
+                  <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 sm:pb-0 lg:w-[360px]">
                     <CompactStatPill icon={Compass} label="Trips" value={12} />
                     <CompactStatPill icon={Trophy} label="Badges" value={7} />
                     <CompactStatPill
